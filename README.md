@@ -47,5 +47,18 @@ Add this configuration block in your conf/modules.conf file
          * If set, the reason to give the users who try to "/msg NickServ SET EMAIL". If not set, then email changing is not blocked.
          */
         disable_email_reason = "To change your e-mail address navigate to http://www.test.fr/change/"
+        
+        /*
+         * Configurable kill message.
+         */
+
+        kill_message = "Error: Too many failed login attempts. Please try again. ID:"
+
+        /*
+         * Configurable max attempts.
+         */
+
+        max_attempts = 5
     }
+
 # Thank's to m_sqlauthentication from Anope Team #
