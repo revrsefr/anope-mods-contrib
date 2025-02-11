@@ -1,4 +1,5 @@
 # m_sqlauth.cpp #
+
 ### 2024 Jean "reverse" Chevronnet ###
 Module for Anope IRC Services v2.1, lets users authenticate with
 credentials stored in a pre-existing SQL server instead of the internal
