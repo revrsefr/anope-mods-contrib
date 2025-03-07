@@ -68,7 +68,7 @@ private:
 
     void FetchYouTubeDetails(const Anope::string &video_id, Anope::string &title, Anope::string &duration, Anope::string &viewCount)
     {
-        const Anope::string api_key = "AIzaSyBWdSIHhcQv7O5smOlCo2bq9QFcEB-zFEE"; // Replace with your new API key
+        const Anope::string api_key = "API-KEY"; // Replace with your new API key
         const Anope::string api_url = "https://www.googleapis.com/youtube/v3/videos?id=" + video_id + "&part=snippet,contentDetails,statistics&key=" + api_key;
 
         CURL *curl = curl_easy_init();
@@ -136,7 +136,7 @@ private:
 
                 if (!title.empty() && !duration.empty() && !viewCount.empty())
                 {
-                    Anope::string response = "\x02\x03""01,00You\x03""00,04Tube\x0F\x02 " + title + " - Duración: " + duration + " - Visto: " + viewCount + " veces.";
+                    Anope::string response = "\x02\x03""01,00You\x03""00,04Tube\x0F\x02 " + title + " - Duration: " + duration + " - Seen: " + viewCount + " times.";
                     Anope::map<Anope::string> tags;
                     IRCD->SendPrivmsg(*ci->bi, ci->name, response, tags);
                 }
