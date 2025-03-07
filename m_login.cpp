@@ -1,16 +1,13 @@
 /*
- * (C) 2003-2025 Anope Team
- * Contact us at team@anope.org
- *
- * Please read COPYING and README for further details.
- *
- * Based on the original code of Epona by Lara.
- * Based on the original code of Services by Andy Church.
+ * (C) 2025 reverse Juean Chevronnet
+ * Contact me at reverse@tchatzone.fr
+ * IRC: irc.tchatzone.fr Port:+6697 (tls)
+ * Salon: #devel
  *
  * Module ns_login created by k4be and reworked by reverse to make it work on 2.1
  * Include the following in your nickserv.conf
  *
- * module { name = "ns_login" }
+ * module { name = "m_login" }
  * command { service = "NickServ"; name = "LOGIN"; command = "nickserv/login"; }
  *
  */
