@@ -59,24 +59,16 @@ public:
             delete this;
             return;
         }
-
-        // 🔥 Ensure bcrypt hash format is correct
+        // Ensure bcrypt hash format is correct
         if (hash.find("bcrypt$$") == 0)
         {
             hash = hash.substr(8); // Remove "bcrypt$$" prefix
-            //Log(LOG_COMMAND) << "[sql_auth]: 🔧 Fixed bcrypt hash format. New hash: " << hash;
         }
-
-        // ✅ Ensure we do not add "$2b$" twice
+        // Ensure we do not add "$2b$" twice
         if (hash.find("$2b$") != 0 && hash.find("2b$") == 0)
         {
             hash = "$" + hash; // Ensure only one "$2b$" prefix
-            //Log(LOG_COMMAND) << "[sql_auth]: 🔧 Fixed bcrypt header. Final hash: " << hash;
         }
-
-        //Log(LOG_COMMAND) << "[sql_auth]: Stored hash: '" << hash << "'";
-        //Log(LOG_COMMAND) << "[sql_auth]: Checking password: '" << currPass << "'";
-
         // Use Anope's bcrypt provider for password verification
         ServiceReference<Encryption::Provider> bcrypt_provider("Encryption::Provider", "bcrypt");
         if (!bcrypt_provider)
@@ -85,14 +77,10 @@ public:
             delete this;
             return;
         }
-
-        //Log(LOG_COMMAND) << "[sql_auth]: 🔍 DEBUG: Comparing hash '" << hash.c_str() << "' with password '" << currPass.c_str() << "'";
-
         if (bcrypt_provider->Compare(hash.c_str(), currPass.c_str()))
         {
             Log(LOG_COMMAND) << "[sql_auth]: ✅ SUCCESS: User @" << req->GetAccount() << "@ LOGGED IN!";
             
-            // 🔥 ADDING THE NICKSERV PART EXACTLY AS REQUESTED
             NickAlias *na = NickAlias::Find(req->GetAccount());
             BotInfo *NickServ = Config->GetClient("NickServ");
 
