@@ -63,3 +63,44 @@ Add this configuration block in your conf/modules.conf file
     }
 
 # Thank's to m_sqlauthentication from Anope Team #
+
+# m_apiauth.cpp #
+
+### 2024 Jean "reverse" Chevronnet ###
+Module for Anope IRC Services v2.1, lets users authenticate with
+credentials at /api/ server instead of the internal
+Anope database.
+
+# Licence #
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see [http://www.gnu.org/licenses/](http://www.gnu.org/licenses/)
+
+# Configuration #
+Add this configuration block in your conf/modules.conf file
+```
+module
+{
+    name = "m_apiauth"
+	verify_ssl = "true"
+	capath = "/etc/ssl/certs"  # Directory containing CA certificates
+    cainfo = "/etc/ssl/certs/ca-certificates.crt"  # Path to CA bundle file
+    api_url = "https://example.fr/accounts/irc/auth/"
+    api_username_param = "username"
+    api_password_param = "password"
+    api_method = "POST"
+    api_success_field = "success"
+    api_email_field = "email"
+    api_key = "vBl0Ycs1-kXEAUp4VOhPGMnDNA9vpUAjEnc9bQ9x7U"
+    disable_reason = "To register, please visit: "
+    disable_email_reason = "To update your email, please visit: "
+	profile_url = "https://example.fr//accounts/profile/%s/"
+    register_url = "https://example.fr//accounts/register/"  
+}
