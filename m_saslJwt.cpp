@@ -106,8 +106,8 @@ private:
 			auto decoded = jwt::decode(token_str.c_str());
 			
 			// Verify the token
-			std::string secret = "9LbwzoQMkbS4yKR2HUMpKZDuZZJ3TsDvp+gza9zYzFpvL+pLk1w07R7ZQ8ZrJGm5Sr9lbFiiPK14JCasK4gZxA==T";
-			std::string expected_issuer = "irc.t-chat.fr";
+			std::string secret = "next update this will be in modules.conf";
+			std::string expected_issuer = "issuer";
 			
 			jwt::verify()
 				.allow_algorithm(jwt::algorithm::hs256{secret})
