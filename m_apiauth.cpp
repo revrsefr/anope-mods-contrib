@@ -257,7 +257,7 @@ public:
     }
     void OnReload(Configuration::Conf &conf) override {
         Configuration::Block &config = conf.GetModule(this);
-        this->api_url = config.Get<const Anope::string>("api_url", "https://www.t-chat.fr/accounts/api/login_token/");
+        this->api_url = config.Get<const Anope::string>("api_url", "https://www.example/accounts/api/login_token/");
         this->api_username_param = config.Get<const Anope::string>("api_username_param", "username");
         this->api_password_param = config.Get<const Anope::string>("api_password_param", "password");
         this->api_method = config.Get<const Anope::string>("api_method", "POST");
