@@ -1,6 +1,6 @@
 /*
 m_sqlauth.cpp
-2025 Jean "reverse" Chevronnet
+2025-04-10 Jean "reverse" Chevronnet
 Module for Anope IRC Services v2.1, lets users authenticate with
 credentials stored in a pre-existing SQL server instead of the internal
 Anope database.
@@ -13,7 +13,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 #include "module.h"
 #include "modules/sql.h"
-#include "modules/encryption.h" // Use Anope's bcrypt module
+#include "modules/encryption.h"
 
 static Module *me;
 
@@ -119,24 +119,39 @@ public:
 class ModuleSQLAuth final : public Module
 {
     Anope::string engine;
-    Anope::string query;
+    Anope::string password_field;
+    Anope::string email_field;
+    Anope::string username_field;
+    Anope::string table_name;
     Anope::string disable_reason, disable_email_reason;
+    Anope::string kill_message;
+    unsigned max_attempts;
 
     ServiceReference<SQL::Provider> SQL;
+
+    // Store failed login attempts
+    std::map<Anope::string, std::pair<time_t, unsigned>> failed_logins;
 
 public:
     ModuleSQLAuth(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, EXTRA | VENDOR)
     {
         me = this;
+        this->SetAuthor("revrsefrJean \"reverse\" Chevronnet");
+        this->SetVersion("1.1.0");
     }
 
     void OnReload(Configuration::Conf &conf) override
     {
         Configuration::Block &config = conf.GetModule(this);
         this->engine = config.Get<const Anope::string>("engine");
-        this->query = config.Get<const Anope::string>("query");
+        this->password_field = config.Get<const Anope::string>("password_field", "password");
+        this->email_field = config.Get<const Anope::string>("email_field", "email");
+        this->username_field = config.Get<const Anope::string>("username_field", "nickname");
+        this->table_name = config.Get<const Anope::string>("table_name", "users");
         this->disable_reason = config.Get<const Anope::string>("disable_reason");
         this->disable_email_reason = config.Get<const Anope::string>("disable_email_reason");
+        this->kill_message = config.Get<const Anope::string>("kill_message", "Error: Too many failed login attempts. Please try again later. ID:");
+        this->max_attempts = config.Get<unsigned>("max_attempts", 5);
 
         this->SQL = ServiceReference<SQL::Provider>("SQL::Provider", this->engine);
     }
@@ -166,23 +181,59 @@ public:
             return;
         }
 
-        SQL::Query q(this->query);
-        q.SetValue("a", req->GetAccount());
-        q.SetValue("p", req->GetPassword());
-
+        // Check if user has too many failed login attempts
         if (u)
         {
-            q.SetValue("n", u->nick);
-            q.SetValue("i", u->ip.addr());
-        }
-        else
-        {
-            q.SetValue("n", "");
-            q.SetValue("i", "");
+            auto it = failed_logins.find(u->ip.addr());
+            if (it != failed_logins.end())
+            {
+                auto &[last_time, attempts] = it->second;
+                
+                // Reset attempts if more than an hour has passed
+                if (Anope::CurTime - last_time > 3600)
+                {
+                    attempts = 0;
+                }
+                else if (attempts >= this->max_attempts)
+                {
+                    // Generate a unique ID for tracking
+                    Anope::string unique_id = Anope::Random(16);
+                    Log(LOG_COMMAND) << "[sql_auth]: 🛑 Too many failed login attempts from " << u->ip.addr() << " ID: " << unique_id;
+                    
+                    BotInfo *NickServ = Config->GetClient("NickServ");
+                    if (NickServ)
+                    {
+                        IRCD->SendKill(NickServ, u->GetUID(), this->kill_message + " " + unique_id);
+                    }
+                    
+                    return;
+                }
+            }
         }
 
-        this->SQL->Run(new SQLAuthResult(u, req->GetPassword(), req), q);
+        // Build a secure parameterized query using tables and fields
+        Anope::string secureQuery = "SELECT `" + this->password_field + "`, `" + this->email_field + 
+                                  "` FROM `" + this->table_name + "` WHERE `" + this->username_field + "` = ?";
+        
+        SQL::Query sqlQuery(secureQuery);
+        sqlQuery.SetValue(0, req->GetAccount());
+        
+        // Execute the query - we never pass the password to the SQL query T_T
+        this->SQL->Run(new SQLAuthResult(u, req->GetPassword(), req), sqlQuery);
         Log(LOG_COMMAND) << "[sql_auth]: 🔎 Checking authentication for " << req->GetAccount();
+    }
+
+    void OnLoginFail(User *u) override
+    {
+        if (u)
+        {
+            auto &record = failed_logins[u->ip.addr()];
+            record.first = Anope::CurTime;
+            record.second++;
+            
+            Log(LOG_DEBUG) << "[sql_auth]: Failed login attempt from " << u->ip.addr() 
+                          << " - " << record.second << "/" << this->max_attempts;
+        }
     }
 
     void OnPreNickExpire(NickAlias *na, bool &expire) override
@@ -191,7 +242,42 @@ public:
         if (na->nick == na->nc->display && na->nc->aliases->size() > 1)
             expire = false;
     }
+    
+    void OnUserQuit(User *u, const Anope::string &msg) override
+    {
+        // Clean up failed login tracking when a user quits
+        if (u && !u->ip.addr().empty())
+        {
+            auto it = failed_logins.find(u->ip.addr());
+            if (it != failed_logins.end() && it->second.second < this->max_attempts)
+            {
+                failed_logins.erase(it);
+            }
+        }
+    }
+    
+    // Clean up old records periodically
+    void OnRestart() override
+    {
+        failed_logins.clear();
+    }
+    
+    // Periodic cleanup of expired records
+    void OnBackupDatabase() override
+    {
+        time_t current = Anope::CurTime;
+        for (auto it = failed_logins.begin(); it != failed_logins.end();)
+        {
+            if (current - it->second.first > 3600)
+            {
+                it = failed_logins.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
 };
 
 MODULE_INIT(ModuleSQLAuth)
-
