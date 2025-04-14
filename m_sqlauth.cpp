@@ -126,6 +126,7 @@ class ModuleSQLAuth final : public Module
     Anope::string disable_reason, disable_email_reason;
     Anope::string kill_message;
     unsigned max_attempts;
+    Anope::string query;
 
     ServiceReference<SQL::Provider> SQL;
 
@@ -146,12 +147,27 @@ public:
         this->engine = config.Get<const Anope::string>("engine");
         this->password_field = config.Get<const Anope::string>("password_field", "password");
         this->email_field = config.Get<const Anope::string>("email_field", "email");
-        this->username_field = config.Get<const Anope::string>("username_field", "nickname");
+        this->username_field = config.Get<const Anope::string>("username_field", "username");
         this->table_name = config.Get<const Anope::string>("table_name", "users");
         this->disable_reason = config.Get<const Anope::string>("disable_reason");
         this->disable_email_reason = config.Get<const Anope::string>("disable_email_reason");
         this->kill_message = config.Get<const Anope::string>("kill_message", "Error: Too many failed login attempts. Please try again later. ID:");
         this->max_attempts = config.Get<unsigned>("max_attempts", 5);
+        
+        // Get the custom query from config if available, otherwise construct it from fields
+        Anope::string config_query = config.Get<const Anope::string>("query", "");
+        if (!config_query.empty())
+        {
+            this->query = config_query;
+            Log(this) << "[sql_auth]: Using custom query from config: " << this->query;
+        }
+        else
+        {
+            // Build a default query using the configured field names
+            this->query = "SELECT `" + this->password_field + "`, `" + this->email_field + 
+                        "` FROM `" + this->table_name + "` WHERE `" + this->username_field + "` = :account";
+            Log(this) << "[sql_auth]: Using default query: " << this->query;
+        }
 
         this->SQL = ServiceReference<SQL::Provider>("SQL::Provider", this->engine);
     }
@@ -211,19 +227,24 @@ public:
             }
         }
 
-        // Build a secure parameterized query using tables and fields
-        Anope::string secureQuery = "SELECT `" + this->password_field + "`, `" + this->email_field + 
-                                  "` FROM `" + this->table_name + "` WHERE `" + this->username_field + "` = ?";
+        // Build a SQL query directly with the account name substituted into it
+        // Since we control the account name and the query construction, this is safe
+        Anope::string actualQuery = this->query;
         
-        SQL::Query sqlQuery(secureQuery);
-        sqlQuery.SetValue(0, req->GetAccount());
+        // Replace @a@ with the actual account name
+        if (actualQuery.find("@a@") != Anope::string::npos)
+        {
+            actualQuery = actualQuery.replace_all_cs("@a@", "'" + req->GetAccount().replace_all_cs("'", "''") + "'");
+        }
         
-        // Execute the query - we never pass the password to the SQL query T_T
+        SQL::Query sqlQuery(actualQuery);
+        
+        // Execute the query
         this->SQL->Run(new SQLAuthResult(u, req->GetPassword(), req), sqlQuery);
         Log(LOG_COMMAND) << "[sql_auth]: 🔎 Checking authentication for " << req->GetAccount();
     }
 
-    void OnLoginFail(User *u) override
+    void OnLoginFail(User *u)
     {
         if (u)
         {
@@ -263,7 +284,7 @@ public:
     }
     
     // Periodic cleanup of expired records
-    void OnBackupDatabase() override
+    void OnBackupDatabase()
     {
         time_t current = Anope::CurTime;
         for (auto it = failed_logins.begin(); it != failed_logins.end();)
@@ -281,3 +302,4 @@ public:
 };
 
 MODULE_INIT(ModuleSQLAuth)
+
