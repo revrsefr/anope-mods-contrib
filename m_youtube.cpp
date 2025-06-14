@@ -1,7 +1,7 @@
 /*
 2024 Jean "reverse" Chevronnet
 Module for Anope IRC Services v2.1.
-SeCuRe will ban any proxy IPs using proxycheck.io API.
+Botserv read and answer youtube links.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,156 +15,196 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+/// $LinkerFlags: -libcurl -lcrypto -lssl -lcurl
+
 #include "module.h"
-#include <map>
-#include <ctime>
 #include <curl/curl.h>
-#include <nlohmann/json.hpp>
+#include <rapidjson/document.h>
+#include <rapidjson/error/en.h>
+#include <regex>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
-// Move ProxyCacheEntry and ProxyCache outside the class
-struct ProxyCacheEntry {
-	bool is_proxy;
-	time_t timestamp;
-};
-
-class ProxyCache {
-	std::map<std::string, ProxyCacheEntry> cache;
-	const int expiry_seconds = 86400; // 1 day
-public:
-	bool get(const std::string& ip, bool& is_proxy) {
-		auto it = cache.find(ip);
-		if (it != cache.end()) {
-			time_t now = std::time(nullptr);
-			if (now - it->second.timestamp < expiry_seconds) {
-				is_proxy = it->second.is_proxy;
-				return true;
-			} else {
-				cache.erase(it);
-			}
-		}
-		return false;
-	}
-	void set(const std::string& ip, bool is_proxy) {
-		cache[ip] = {is_proxy, std::time(nullptr)};
-	}
-};
-
-class SeCuReModule : public Module
+class CommandBSYouTube final : public Command
 {
-	BotInfo *secureBot = nullptr;
-	ProxyCache proxyCache;
-	std::string proxycheck_api_key;
+private:
+    static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+    {
+        ((std::string*)userp)->append((char*)contents, size * nmemb);
+        return size * nmemb;
+    }
+
+    std::string ParseISO8601Duration(const std::string &duration)
+    {
+        std::chrono::seconds seconds(0);
+        std::smatch match;
+        std::regex duration_regex("PT((\\d+)H)?((\\d+)M)?((\\d+)S)?");
+
+        if (std::regex_match(duration, match, duration_regex))
+        {
+            if (match[2].matched)
+                seconds += std::chrono::hours(std::stoi(match[2].str()));
+            if (match[4].matched)
+                seconds += std::chrono::minutes(std::stoi(match[4].str()));
+            if (match[6].matched)
+                seconds += std::chrono::seconds(std::stoi(match[6].str()));
+        }
+
+        auto h = std::chrono::duration_cast<std::chrono::hours>(seconds).count();
+        auto m = std::chrono::duration_cast<std::chrono::minutes>(seconds).count() % 60;
+        auto s = seconds.count() % 60;
+
+        std::ostringstream oss;
+        if (h > 0) oss << h << "h";
+        if (m > 0) oss << m << "m";
+        if (s > 0) oss << s << "s";
+
+        return oss.str();
+    }
+
+    void FetchYouTubeDetails(const Anope::string &video_id, Anope::string &title, Anope::string &duration, Anope::string &viewCount)
+    {
+        const Anope::string api_key = "API-KEY"; // Replace with your new API key
+        const Anope::string api_url = "https://www.googleapis.com/youtube/v3/videos?id=" + video_id + "&part=snippet,contentDetails,statistics&key=" + api_key;
+
+        CURL *curl = curl_easy_init();
+        if (curl)
+        {
+            curl_easy_setopt(curl, CURLOPT_URL, api_url.c_str());
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L); // Disable SSL verification for testing
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+            std::string response_string;
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_string);
+
+            CURLcode res = curl_easy_perform(curl);
+            if (res == CURLE_OK)
+            {
+                rapidjson::Document jsonData;
+                if (jsonData.Parse(response_string.c_str()).HasParseError())
+                {
+                    Log() << "JSON Parse Error: " << rapidjson::GetParseError_En(jsonData.GetParseError());
+                    curl_easy_cleanup(curl);
+                    return;
+                }
+
+                if (jsonData.HasMember("items") && jsonData["items"].IsArray() && jsonData["items"].Size() > 0)
+                {
+                    const rapidjson::Value& items = jsonData["items"];
+                    const rapidjson::Value& snippet = items[0]["snippet"];
+                    const rapidjson::Value& contentDetails = items[0]["contentDetails"];
+                    const rapidjson::Value& statistics = items[0]["statistics"];
+
+                    title = snippet["title"].GetString();
+                    duration = ParseISO8601Duration(contentDetails["duration"].GetString());
+                    viewCount = statistics["viewCount"].GetString();
+                }
+                else
+                {
+                    Log() << "Invalid JSON response: 'items' field missing or not an array or empty";
+                }
+            }
+            else
+            {
+                Log() << "CURL Error: " << curl_easy_strerror(res);
+            }
+
+            curl_easy_cleanup(curl);
+        }
+        else
+        {
+            Log() << "CURL Initialization Error";
+        }
+    }
+
+    void HandleYouTubeLink(ChannelInfo *ci, const Anope::string &message)
+    {
+        try
+        {
+            std::regex youtube_regex("https?://(?:www\\.)?youtube\\.com/watch\\?v=([a-zA-Z0-9_-]+)");
+            std::smatch match;
+            if (std::regex_search(message.begin(), message.end(), match, youtube_regex) && match.size() > 1)
+            {
+                Anope::string video_id = match.str(1).c_str();
+                Anope::string title, duration, viewCount;
+                FetchYouTubeDetails(video_id, title, duration, viewCount);
+
+                if (!title.empty() && !duration.empty() && !viewCount.empty())
+                {
+                    Anope::string response = "\x02\x03""01,00You\x03""00,04Tube\x0F\x02 " + title + " - Duration: " + duration + " - Seen: " + viewCount + " times.";
+                    Anope::map<Anope::string> tags;
+                    IRCD->SendPrivmsg(*ci->bi, ci->name, response, tags);
+                }
+                else
+                {
+                    Log() << "Failed to fetch YouTube details for video ID: " << video_id;
+                    Anope::string response = "Failed to fetch YouTube details. Please check the logs for more information.";
+                    Anope::map<Anope::string> tags;
+                    IRCD->SendPrivmsg(*ci->bi, ci->name, response, tags);
+                }
+            }
+        }
+        catch (const std::regex_error &e)
+        {
+            Log() << "Regex error: " << e.what();
+        }
+    }
 
 public:
-	SeCuReModule(const Anope::string &modname, const Anope::string &creator)
-		: Module(modname, creator, VENDOR)
-	{
-		this->SetAuthor("YourName");
-		this->SetVersion("1.0");
-		// Check API key on module load
-		Configuration::Block &config = Config->GetModule(this);
-		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
-		if (this->proxycheck_api_key.empty()) {
-			throw ModuleException("m_secure: proxycheck_api_key is not set in anope.conf, refusing to load.");
-		}
-	}
+    CommandBSYouTube(Module *creator) : Command(creator, "botserv/youtube", 1, 1)
+    {
+        this->SetDesc(_("Handles YouTube links and fetches video details"));
+        this->SetSyntax(_("\037channel\037 \037message\037"));
+    }
 
-	void OnReload(Configuration::Conf &conf)
-	{
-		Configuration::Block &config = conf.GetModule(this);
-		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
-		if (this->proxycheck_api_key.empty()) {
-			throw ModuleException("m_secure: proxycheck_api_key is not set in anope.conf, refusing to reload.");
-		}
-		CreateBot();
-	}
+    void Execute(CommandSource &source, const std::vector<Anope::string> &params) override
+    {
+        const Anope::string &channel = params[0];
+        const Anope::string &message = params[1];
 
-	void OnModuleLoad()
-	{
-		Configuration::Block &config = Config->GetModule(this);
-		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
-		CreateBot();
-	}
+        ChannelInfo *ci = ChannelInfo::Find(channel);
+        if (ci == nullptr || !ci->c || !ci->c->FindUser(ci->bi))
+        {
+            source.Reply("Bot is not on the channel or channel not found.");
+            return;
+        }
 
-	void OnModuleUnload()
-	{
-		if (secureBot)
-		{
-			delete secureBot;
-			secureBot = nullptr;
-		}
-	}
+        HandleYouTubeLink(ci, message);
+    }
 
-	void CreateBot()
-	{
-		if (secureBot)
-			return;
+    bool OnHelp(CommandSource &source, const Anope::string &subcommand) override
+    {
+        this->SendSyntax(source);
+        source.Reply(" ");
+        source.Reply(_("Handles YouTube links and fetches video details when a YouTube link is posted in the channel."));
+        return true;
+    }
 
-		secureBot = BotInfo::Find("SeCuRe");
-		if (!secureBot)
-		{
-			// Create the bot in code, core-style, with all required fields and modes
-			secureBot = new BotInfo("SeCuRe", "SeCuRe", "network.services", "SeCuRe Servers", "+oSiI");
-			Log(LOG_NORMAL, "m_secure") << "Created SeCuRe bot (core style).";
-		}
-	}
-
-	// Helper for cURL HTTP GET
-	static size_t CurlWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-		((std::string*)userp)->append((char*)contents, size * nmemb);
-		return size * nmemb;
-	}
-
-	// Proxy check logic using proxycheck.io
-	bool IsProxyIP(const std::string& ip, ProxyCache& cache, const std::string& api_key) {
-		bool cached_result;
-		if (cache.get(ip, cached_result))
-			return cached_result;
-
-		std::string url = "https://proxycheck.io/v2/" + ip + "?key=" + api_key + "&vpn=1&asn=1&node=1&inf=1";
-		CURL* curl = curl_easy_init();
-		if (!curl) return false;
-		std::string response;
-		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-		CURLcode res = curl_easy_perform(curl);
-		curl_easy_cleanup(curl);
-		if (res != CURLE_OK) return false;
-
-		// Parse JSON response robustly
-		try {
-			auto json = nlohmann::json::parse(response);
-			if (json.contains(ip) && json[ip].contains("proxy")) {
-				bool is_proxy = json[ip]["proxy"] == "yes";
-				cache.set(ip, is_proxy);
-				return is_proxy;
-			}
-		} catch (...) {
-			// Fallback to string search if JSON parsing fails
-			bool is_proxy = response.find("\"proxy\":\"yes\"") != std::string::npos;
-			cache.set(ip, is_proxy);
-			return is_proxy;
-		}
-		cache.set(ip, false);
-		return false;
-	}
-
-	// In OnUserConnect, check if secureBot is valid before using it
-	void OnUserConnect(User *user, bool &exempt) override
-	{
-		if (exempt || user->Quitting() || !Me->IsSynced() || !user->server->IsSynced())
-			return;
-		if (!user->ip.valid() || user->ip.sa.sa_family != AF_INET)
-			return;
-		std::string ip = user->ip.addr().str();
-		if (IsProxyIP(ip, proxyCache, proxycheck_api_key)) {
-			if (secureBot)
-				user->SendMessage(secureBot, "You are connecting from a detected proxy. Please reconnect without a proxy.");
-			user->Kill(Me, "Proxy detected by SeCuRe");
-		}
-	}
+    friend class YouTubeModule;
 };
 
-MODULE_INIT(SeCuReModule)
+class YouTubeModule final : public Module
+{
+    CommandBSYouTube commandbsYouTube;
 
+public:
+    YouTubeModule(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
+                                                                               commandbsYouTube(this)
+    {
+    }
+
+    void OnPrivmsg(User *u, Channel *c, Anope::string &msg, const Anope::map<Anope::string> &tags) override
+    {
+        if (u == nullptr || c == nullptr || c->ci == nullptr || c->ci->bi == nullptr || msg.empty() || msg[0] == '\1')
+            return;
+
+        if (msg.find("youtube.com/watch") != Anope::string::npos)
+        {
+            commandbsYouTube.HandleYouTubeLink(c->ci, msg);
+        }
+    }
+};
+
+MODULE_INIT(YouTubeModule)
