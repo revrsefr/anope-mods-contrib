@@ -59,7 +59,7 @@ public:
 	SeCuReModule(const Anope::string &modname, const Anope::string &creator)
 		: Module(modname, creator, VENDOR)
 	{
-		this->SetAuthor("YourName");
+		this->SetAuthor("reverse");
 		this->SetVersion("1.0");
 		// Check API key on module load
 		Configuration::Block &config = Config->GetModule(this);
