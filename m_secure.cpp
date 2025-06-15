@@ -57,6 +57,7 @@ class SeCuReModule : public Module
 	std::string proxycheck_api_key;
 	std::string log_channel_name;
 	std::set<std::string> whitelisted_servers;
+	std::string wildcard_server;
 
 public:
 	SeCuReModule(const Anope::string &modname, const Anope::string &creator)
@@ -68,6 +69,7 @@ public:
 		Configuration::Block &config = Config->GetModule(this);
 		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
 		this->log_channel_name = config.Get<const Anope::string>("log_channel", "#services").str();
+		this->wildcard_server = config.Get<const Anope::string>("wildcard_server", "").str();
 		// Load whitelist_servers from config (space or comma separated)
 		std::string whitelist = config.Get<const Anope::string>("whitelist_servers", "").str();
 		whitelisted_servers.clear();
@@ -90,6 +92,7 @@ public:
 		Configuration::Block &config = conf.GetModule(this);
 		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
 		this->log_channel_name = config.Get<const Anope::string>("log_channel", "#services").str();
+		this->wildcard_server = config.Get<const Anope::string>("wildcard_server", "").str();
 		// Reload whitelist_servers
 		std::string whitelist = config.Get<const Anope::string>("whitelist_servers", "").str();
 		whitelisted_servers.clear();
@@ -194,8 +197,15 @@ public:
 		if (exempt || user->Quitting() || !Me->IsSynced() || !user->server->IsSynced())
 			return;
 		// Whitelist check
-		if (user->server && whitelisted_servers.count(user->server->GetName().str()))
+		std::string servername = user->server ? user->server->GetName().str() : "";
+		if (user->server && whitelisted_servers.count(servername))
 			return;
+		// Wildcard check
+		if (!wildcard_server.empty() && wildcard_server[0] == '*' && wildcard_server[1] == '.') {
+			std::string suffix = wildcard_server.substr(1); // e.g. ".uin"
+			if (servername.length() >= suffix.length() && servername.compare(servername.length() - suffix.length(), suffix.length(), suffix) == 0)
+				return;
+		}
 		if (!user->ip.valid() || user->ip.sa.sa_family != AF_INET)
 			return;
 		std::string ip = user->ip.addr().str();
