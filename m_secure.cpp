@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <ctime>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <set>
 
 // Move ProxyCacheEntry and ProxyCache outside the class
 struct ProxyCacheEntry {
@@ -54,6 +55,8 @@ class SeCuReModule : public Module
 	BotInfo *secureBot = nullptr;
 	ProxyCache proxyCache;
 	std::string proxycheck_api_key;
+	std::string log_channel_name;
+	std::set<std::string> whitelisted_servers;
 
 public:
 	SeCuReModule(const Anope::string &modname, const Anope::string &creator)
@@ -61,9 +64,22 @@ public:
 	{
 		this->SetAuthor("reverse");
 		this->SetVersion("1.0");
-		// Check API key on module load
+		// Check API key and log channel on module load
 		Configuration::Block &config = Config->GetModule(this);
 		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
+		this->log_channel_name = config.Get<const Anope::string>("log_channel", "#services").str();
+		// Load whitelist_servers from config (space or comma separated)
+		std::string whitelist = config.Get<const Anope::string>("whitelist_servers", "").str();
+		whitelisted_servers.clear();
+		std::string delim = (whitelist.find(',') != std::string::npos) ? "," : " ";
+		size_t start = 0, end;
+		while ((end = whitelist.find(delim, start)) != std::string::npos) {
+			std::string s = whitelist.substr(start, end - start);
+			if (!s.empty()) whitelisted_servers.insert(s);
+			start = end + delim.length();
+		}
+		std::string last = whitelist.substr(start);
+		if (!last.empty()) whitelisted_servers.insert(last);
 		if (this->proxycheck_api_key.empty()) {
 			throw ModuleException("m_secure: proxycheck_api_key is not set in anope.conf, refusing to load.");
 		}
@@ -73,6 +89,19 @@ public:
 	{
 		Configuration::Block &config = conf.GetModule(this);
 		this->proxycheck_api_key = config.Get<const Anope::string>("proxycheck_api_key", "").str();
+		this->log_channel_name = config.Get<const Anope::string>("log_channel", "#services").str();
+		// Reload whitelist_servers
+		std::string whitelist = config.Get<const Anope::string>("whitelist_servers", "").str();
+		whitelisted_servers.clear();
+		std::string delim = (whitelist.find(',') != std::string::npos) ? "," : " ";
+		size_t start = 0, end;
+		while ((end = whitelist.find(delim, start)) != std::string::npos) {
+			std::string s = whitelist.substr(start, end - start);
+			if (!s.empty()) whitelisted_servers.insert(s);
+			start = end + delim.length();
+		}
+		std::string last = whitelist.substr(start);
+		if (!last.empty()) whitelisted_servers.insert(last);
 		if (this->proxycheck_api_key.empty()) {
 			throw ModuleException("m_secure: proxycheck_api_key is not set in anope.conf, refusing to reload.");
 		}
@@ -106,6 +135,15 @@ public:
 			// Create the bot in code, core-style, with all required fields and modes
 			secureBot = new BotInfo("SeCuRe", "SeCuRe", "network.services", "SeCuRe Servers", "+oSiI");
 			Log(LOG_NORMAL, "m_secure") << "Created SeCuRe bot (core style).";
+		}
+		// Make the bot join the log channel if configured
+		if (!log_channel_name.empty()) {
+			bool created = false;
+			Channel *logchan = Channel::FindOrCreate(log_channel_name, created);
+			if (logchan && !logchan->FindUser(secureBot)) {
+				secureBot->Join(logchan); // Join as a service bot
+				Log(LOG_NORMAL, "m_secure") << "SeCuRe joined log channel: " << log_channel_name;
+			}
 		}
 	}
 
@@ -155,6 +193,9 @@ public:
 	{
 		if (exempt || user->Quitting() || !Me->IsSynced() || !user->server->IsSynced())
 			return;
+		// Whitelist check
+		if (user->server && whitelisted_servers.count(user->server->GetName().str()))
+			return;
 		if (!user->ip.valid() || user->ip.sa.sa_family != AF_INET)
 			return;
 		std::string ip = user->ip.addr().str();
@@ -162,9 +203,18 @@ public:
 			if (secureBot)
 				user->SendMessage(secureBot, "You are connecting from a detected proxy. Please reconnect without a proxy.");
 			user->Kill(Me, "Proxy detected by SeCuRe");
+
+			// Logging to channel if configured and bot is present
+			if (secureBot && !log_channel_name.empty()) {
+				Channel *logchan = Channel::Find(log_channel_name);
+				if (logchan && logchan->FindUser(secureBot)) {
+					MessageSource src(secureBot);
+					Anope::string msg = Anope::printf("Killed proxy user: %s [%s]", user->nick.c_str(), ip.c_str());
+					IRCD->SendPrivmsg(src, logchan->name, msg);
+				}
+			}
 		}
 	}
 };
 
 MODULE_INIT(SeCuReModule)
-
