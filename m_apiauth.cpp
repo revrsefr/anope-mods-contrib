@@ -55,16 +55,22 @@ private:
     Anope::string api_capath;
     Anope::string api_cainfo;
 
+    Anope::string jwt_secret;
+    Anope::string jwt_issuer;
+
 public:
-    // Constructor now takes 9 parameters.
-    APIAuthRequest(User *u, IdentifyRequest *r, const Anope::string &url, 
+    // Constructor.
+    APIAuthRequest(User *u, IdentifyRequest *r, const Anope::string &url,
                    const Anope::string &username_param, const Anope::string &password_param,
                    const Anope::string &method, const Anope::string &success_field,
-                   const Anope::string &email_field, const Anope::string &key) 
+                   const Anope::string &email_field, const Anope::string &key,
+                   const Anope::string &verify_ssl, const Anope::string &capath, const Anope::string &cainfo,
+                   const Anope::string &jwt_secret_, const Anope::string &jwt_issuer_)
         : user(u), req(r), api_url(url), api_username_param(username_param),
           api_password_param(password_param), api_method(method),
           api_success_field(success_field), api_email_field(email_field),
-          api_key(key)
+          api_key(key), api_verify_ssl(verify_ssl), api_capath(capath), api_cainfo(cainfo),
+          jwt_secret(jwt_secret_), jwt_issuer(jwt_issuer_)
     {
         req->Hold(me);
     }
@@ -90,11 +96,38 @@ public:
         std::string userParam(api_username_param.c_str());
         std::string passParam(api_password_param.c_str());
         std::string url(api_url.c_str());
+
+        const auto &pw = req->GetPassword();
+        Log(LOG_COMMAND) << "[api_auth]: Target URL: " << api_url;
+        Log(LOG_COMMAND) << "[api_auth]: Account='" << req->GetAccount() << "' password_present="
+                 << (!pw.empty() ? "yes" : "no") << " password_length=" << pw.length();
+        Log(LOG_COMMAND) << "[api_auth]: API key configured: " << (!api_key.empty() ? "yes" : "no");
         
-        postData = userParam + "=" + curl_easy_escape(curl, req->GetAccount().c_str(), 0) + "&" +
-                   passParam + "=" + curl_easy_escape(curl, req->GetPassword().c_str(), 0);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        char *escaped_user = curl_easy_escape(curl, req->GetAccount().c_str(), 0);
+        char *escaped_pass = curl_easy_escape(curl, req->GetPassword().c_str(), 0);
+
+        if (api_method.equals_ci("GET"))
+        {
+            std::string full_url = url;
+            full_url += (full_url.find('?') == std::string::npos) ? "?" : "&";
+            full_url += userParam + "=" + (escaped_user ? escaped_user : "");
+            full_url += "&" + passParam + "=" + (escaped_pass ? escaped_pass : "");
+            curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+            curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
+        }
+        else
+        {
+            postData = userParam + "=" + (escaped_user ? escaped_user : "") + "&" +
+                       passParam + "=" + (escaped_pass ? escaped_pass : "");
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        }
+
+        if (escaped_user)
+            curl_free(escaped_user);
+        if (escaped_pass)
+            curl_free(escaped_pass);
         
         std::string key(api_key.c_str());
         struct curl_slist *headers = NULL;
@@ -132,6 +165,8 @@ public:
         {
             Log(LOG_COMMAND) << "[api_auth]: ❌ ERROR: CURL failed: " << curl_easy_strerror(res);
             response.error_message = "Connection error: Could not reach authentication server";
+            if (headers)
+                curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
             return response;
         }
@@ -142,6 +177,8 @@ public:
         {
             Log(LOG_COMMAND) << "[api_auth]: ❌ ERROR: API returned HTTP code " << http_code;
             response.error_message = "API error: Unexpected HTTP response code";
+            if (headers)
+                curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
             return response;
         }
@@ -159,7 +196,12 @@ public:
                 }
             }
             else {
-                response.error_message = "API response missing access_token field";
+                if (root.contains("error") && root["error"].is_string())
+                    response.error_message = root["error"].get<std::string>().c_str();
+                else if (root.contains("detail") && root["detail"].is_string())
+                    response.error_message = root["detail"].get<std::string>().c_str();
+                else
+                    response.error_message = "API response missing access_token field";
             }
         }
         catch (const json::parse_error &e) {
@@ -188,13 +230,22 @@ public:
             if (!response.access_token.empty()) {
                 try {
                     std::string token_str(response.access_token.c_str());
-                    std::string jwt_secret = "your secret";
-                    std::string expected_issuer = "your issuer";
                     auto decoded = jwt::decode(token_str);
-                    jwt::verify()
-                        .allow_algorithm(jwt::algorithm::hs256{jwt_secret})
-                        .with_issuer(expected_issuer)
-                        .verify(decoded);
+
+                    if (!this->jwt_secret.empty() && !this->jwt_issuer.empty())
+                    {
+                        std::string jwt_secret_str(this->jwt_secret.c_str());
+                        std::string expected_issuer(this->jwt_issuer.c_str());
+                        jwt::verify()
+                            .allow_algorithm(jwt::algorithm::hs256{jwt_secret_str})
+                            .with_issuer(expected_issuer)
+                            .verify(decoded);
+                    }
+                    else
+                    {
+                        Log(LOG_DEBUG) << "[api_auth]: JWT verification disabled (jwt_secret/jwt_issuer not configured)";
+                    }
+
                     std::string subject = decoded.get_payload_claim("sub").as_string();
                     if (!subject.empty())
                         effective_account = subject.c_str();
@@ -220,11 +271,12 @@ public:
                     user->SendMessage(NickServ, _("E-mail set to \002%s\002."), response.email.c_str());
             }
             // Optionally, store the JWT token (response.access_token) for further usage.
-            req->Success(me);
+            req->Success(me, na);
         } else {
             Log(LOG_COMMAND) << "[api_auth]: ❌ ERROR: Authentication failed for user " 
                              << req->GetAccount() << " - " 
                              << (!response.error_message.empty() ? response.error_message : "Invalid credentials");
+            // Do not call Success(); IdentifyRequest will invoke OnFail() when released.
         }
         delete this;
     }
@@ -243,6 +295,8 @@ class ModuleAPIAuth final : public Module {
     Anope::string api_verify_ssl;
     Anope::string api_capath;
     Anope::string api_cainfo;
+    Anope::string jwt_secret;
+    Anope::string jwt_issuer;
     Anope::string profile_url;
     Anope::string register_url;
 public:
@@ -268,6 +322,8 @@ public:
         this->api_verify_ssl = config.Get<const Anope::string>("verify_ssl", "true");
         this->api_capath = config.Get<const Anope::string>("capath", "");
         this->api_cainfo = config.Get<const Anope::string>("cainfo", "");
+        this->jwt_secret = config.Get<const Anope::string>("jwt_secret", "");
+        this->jwt_issuer = config.Get<const Anope::string>("jwt_issuer", "");
         this->profile_url = config.Get<const Anope::string>("profile_url", "https://www.example/accounts/profile/%s/"); // dynamic fetch
         this->register_url = config.Get<const Anope::string>("register_url", "https://www.example/accounts/register/");
     }
@@ -306,7 +362,12 @@ public:
                                                       this->api_method,
                                                       "", // success field not used
                                                       this->api_email_field,
-                                                      this->api_key);
+                                                      this->api_key,
+                                                      this->api_verify_ssl,
+                                                      this->api_capath,
+                                                      this->api_cainfo,
+                                                      this->jwt_secret,
+                                                      this->jwt_issuer);
         auth_req->ProcessAuth();
     }
     void OnPreNickExpire(NickAlias *na, bool &expire) override {
