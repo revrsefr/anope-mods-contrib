@@ -415,3 +415,8 @@ Config:
 module { name = "os_regset" }
 command { service = "OperServ"; name = "REGSET"; command = "operserv/regset"; permission = "operserv/regset"; }
 ```
+
+## Contact
+
+IRC: irc.irc4fun.net +6697 (tls)
+Channel: #development
