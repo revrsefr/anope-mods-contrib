@@ -29,6 +29,18 @@
  *    email_founder_change = no
  *    email_successor_change = no
  *
+ *   # If access is added via a mask (e.g. nick!ident@host) and not a registered account,
+ *   # the module can't memo/email the target. When enabled, it replies to the command source.
+ *    notice_unregistered_access_add = no
+ *
+ *   # If access is added via a mask (including *!*@*) and the channel currently exists,
+ *   # notify matching online users in the channel.
+ *    notice_mask_access_add = no
+ *
+ *   # If the added account is currently online/identified, send them a notice/privmsg too.
+ *   # (Uses the same delivery method as other service messages: NOTICE vs PRIVMSG depends on settings.)
+ *    notice_online_access_add = no
+ *
  *   # If "no", don’t notify when you change your own access/founder/successor
  *    notify_self = no
  *
@@ -52,6 +64,9 @@ class ModuleMemoChanAccess final
 	bool email_access_add = false;
 	bool email_founder_change = false;
 	bool email_successor_change = false;
+	bool notice_unregistered_access_add = false;
+	bool notice_online_access_add = false;
+	bool notice_mask_access_add = false;
 	bool notify_self = false;
 	Anope::string sender;
 
@@ -63,6 +78,9 @@ class ModuleMemoChanAccess final
 		email_access_add = block.Get<bool>("email_access_add", "no");
 		email_founder_change = block.Get<bool>("email_founder_change", "no");
 		email_successor_change = block.Get<bool>("email_successor_change", "no");
+		notice_unregistered_access_add = block.Get<bool>("notice_unregistered_access_add", "no");
+		notice_online_access_add = block.Get<bool>("notice_online_access_add", "no");
+		notice_mask_access_add = block.Get<bool>("notice_mask_access_add", "no");
 		notify_self = block.Get<bool>("notify_self", "no");
 		sender = block.Get<const Anope::string>("sender", "ChanServ");
 	}
@@ -78,6 +96,15 @@ class ModuleMemoChanAccess final
 		if (auto *cs = Config->GetClient("ChanServ"))
 			return cs->nick;
 		return "ChanServ";
+	}
+
+	BotInfo *GetSenderBot(CommandSource &source, ChannelInfo *ci) const
+	{
+		if (ci && ci->WhoSends())
+			return ci->WhoSends();
+		if (source.service)
+			return source.service;
+		return Config->GetClient("ChanServ");
 	}
 
 	void TrySendMemo(CommandSource &source, ChannelInfo *ci, NickCore *target, const Anope::string &text)
@@ -107,6 +134,47 @@ class ModuleMemoChanAccess final
 			Log(LOG_DEBUG, "m_memo_chanaccess") << "Unable to send email to " << target->display;
 	}
 
+	void TrySendOnlineNotice(CommandSource &source, ChannelInfo *ci, NickCore *target, const Anope::string &text)
+	{
+		if (!target)
+			return;
+		if (!notify_self && source.GetAccount() && source.GetAccount() == target)
+			return;
+
+		auto *bi = GetSenderBot(source, ci);
+		if (!bi)
+			return;
+
+		for (auto *u : target->users)
+		{
+			if (u)
+				u->SendMessage(bi, text);
+		}
+	}
+
+	void TrySendMaskOnlineNotice(CommandSource &source, ChannelInfo *ci, ChanAccess *access, const Anope::string &text)
+	{
+		if (!ci || !ci->c || !access)
+			return;
+
+		auto *bi = GetSenderBot(source, ci);
+		if (!bi)
+			return;
+
+		for (const auto &[_, uc] : ci->c->users)
+		{
+			auto *u = uc->user;
+			if (!u)
+				continue;
+			if (!notify_self && source.GetAccount() && u->Account() && source.GetAccount() == u->Account())
+				continue;
+
+			ChannelInfo *next = nullptr;
+			if (access->Matches(u, u->Account(), next))
+				u->SendMessage(bi, text);
+		}
+	}
+
 public:
 	ModuleMemoChanAccess(const Anope::string &modname, const Anope::string &creator)
 		: Module(modname, creator)
@@ -123,17 +191,30 @@ public:
 
 	void OnAccessAdd(ChannelInfo *ci, CommandSource &source, ChanAccess *access) override
 	{
-		if (!notify_access_add || !ci || !access)
+		if (!ci || !access)
+			return;
+		if (!notify_access_add && !email_access_add && !notice_unregistered_access_add && !notice_online_access_add && !notice_mask_access_add)
 			return;
 
 		auto *target = access->GetAccount();
 		if (!target)
+		{
+			Anope::string msg = "Access entry " + access->Mask() + " has been added to the access list for " + ci->name
+				+ " by " + source.GetNick() + " (access: " + access->AccessSerialize() + ").";
+
+			if (notice_mask_access_add)
+				TrySendMaskOnlineNotice(source, ci, access, msg);
+			else if (notice_unregistered_access_add)
+				source.Reply("Access entry %s on %s is not a registered account; no memo/email sent.", access->Mask().c_str(), ci->name.c_str());
 			return;
+		}
 
 		Anope::string msg = "You have been added to the access list for " + ci->name
 			+ " by " + source.GetNick() + " (access: " + access->AccessSerialize() + ").";
 
 		TrySendMemo(source, ci, target, msg);
+		if (notice_online_access_add)
+			TrySendOnlineNotice(source, ci, target, msg);
 		if (email_access_add)
 			TrySendEmail(source, target, "Channel access update for " + ci->name, msg);
 	}
@@ -143,8 +224,10 @@ public:
 		if (!command)
 			return;
 
-		if (notify_founder_change && command->name.equals_ci("chanserv/set/founder"))
+		if (command->name.equals_ci("chanserv/set/founder"))
 		{
+			if (!notify_founder_change && !email_founder_change)
+				return;
 			if (params.size() < 2)
 				return;
 			auto *ci = ChannelInfo::Find(params[0]);
@@ -155,14 +238,17 @@ public:
 				return;
 
 			Anope::string msg = "You have been set as founder of " + ci->name + " by " + source.GetNick() + ".";
-			TrySendMemo(source, ci, na->nc, msg);
+			if (notify_founder_change)
+				TrySendMemo(source, ci, na->nc, msg);
 			if (email_founder_change)
 				TrySendEmail(source, na->nc, "Founder change for " + ci->name, msg);
 			return;
 		}
 
-		if (notify_successor_change && command->name.equals_ci("chanserv/set/successor"))
+		if (command->name.equals_ci("chanserv/set/successor"))
 		{
+			if (!notify_successor_change && !email_successor_change)
+				return;
 			if (params.empty())
 				return;
 			// Successor can be unset by passing no nick.
@@ -176,7 +262,8 @@ public:
 				return;
 
 			Anope::string msg = "You have been set as successor of " + ci->name + " by " + source.GetNick() + ".";
-			TrySendMemo(source, ci, na->nc, msg);
+			if (notify_successor_change)
+				TrySendMemo(source, ci, na->nc, msg);
 			if (email_successor_change)
 				TrySendEmail(source, na->nc, "Successor change for " + ci->name, msg);
 			return;
