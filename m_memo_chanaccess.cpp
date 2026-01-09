@@ -64,7 +64,7 @@ class ModuleMemoChanAccess final
 		email_founder_change = block.Get<bool>("email_founder_change", "no");
 		email_successor_change = block.Get<bool>("email_successor_change", "no");
 		notify_self = block.Get<bool>("notify_self", "no");
-		sender = block.Get<const Anope::string>("sender", "");
+		sender = block.Get<const Anope::string>("sender", "ChanServ");
 	}
 
 	Anope::string GetSenderNick(CommandSource &source, ChannelInfo *ci) const
