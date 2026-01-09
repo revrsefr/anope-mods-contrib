@@ -12,6 +12,32 @@
  * MemoServ: [NOTICE] Memo 1 from tChatCop (Fri Jan  9 12:49:53 2026 (37 seconds ago)).
  * MemoServ: [NOTICE] To delete, type: /msg MemoServ DEL 1
  * MemoServ: [NOTICE] You have been added to the access list for #!accueil by reverse (access: 5).
+ *
+ * Configuration options for the m_memo_chanaccess
+ * 
+ * module
+ * {
+ *    name = "m_memo_chanaccess"
+ *
+ *    # Use MemoServ (memos)
+ *    notify_access_add = yes
+ *    notify_founder_change = yes
+ *    notify_successor_change = yes
+ *
+ *   # Send email — uses Anope’s mail system (same as NickServ’s email features)
+ *    email_access_add = no
+ *    email_founder_change = no
+ *    email_successor_change = no
+ *
+ *   # If "no", don’t notify when you change your own access/founder/successor
+ *    notify_self = no
+ *
+ *    # Optional: force memo sender nick (otherwise uses WhoSends()/service/ChanServ)
+ *    sender = "ChanServ"
+ * }
+ * 
+ * 
+ * 
  */
 
 #include "module.h"
@@ -23,6 +49,9 @@ class ModuleMemoChanAccess final
 	bool notify_access_add = true;
 	bool notify_founder_change = true;
 	bool notify_successor_change = true;
+	bool email_access_add = false;
+	bool email_founder_change = false;
+	bool email_successor_change = false;
 	bool notify_self = false;
 	Anope::string sender;
 
@@ -31,6 +60,9 @@ class ModuleMemoChanAccess final
 		notify_access_add = block.Get<bool>("notify_access_add", "yes");
 		notify_founder_change = block.Get<bool>("notify_founder_change", "yes");
 		notify_successor_change = block.Get<bool>("notify_successor_change", "yes");
+		email_access_add = block.Get<bool>("email_access_add", "no");
+		email_founder_change = block.Get<bool>("email_founder_change", "no");
+		email_successor_change = block.Get<bool>("email_successor_change", "no");
 		notify_self = block.Get<bool>("notify_self", "no");
 		sender = block.Get<const Anope::string>("sender", "");
 	}
@@ -62,6 +94,19 @@ class ModuleMemoChanAccess final
 			Log(LOG_DEBUG, "m_memo_chanaccess") << "Unable to send memo to " << target->display << " (result=" << result << ")";
 	}
 
+	void TrySendEmail(CommandSource &source, NickCore *target, const Anope::string &subject, const Anope::string &text)
+	{
+		if (!target)
+			return;
+		if (Anope::ReadOnly)
+			return;
+		if (!notify_self && source.GetAccount() && source.GetAccount() == target)
+			return;
+
+		if (!Mail::Send(target, subject, text))
+			Log(LOG_DEBUG, "m_memo_chanaccess") << "Unable to send email to " << target->display;
+	}
+
 public:
 	ModuleMemoChanAccess(const Anope::string &modname, const Anope::string &creator)
 		: Module(modname, creator)
@@ -89,6 +134,8 @@ public:
 			+ " by " + source.GetNick() + " (access: " + access->AccessSerialize() + ").";
 
 		TrySendMemo(source, ci, target, msg);
+		if (email_access_add)
+			TrySendEmail(source, target, "Channel access update for " + ci->name, msg);
 	}
 
 	void OnPostCommand(CommandSource &source, Command *command, const std::vector<Anope::string> &params) override
@@ -109,6 +156,8 @@ public:
 
 			Anope::string msg = "You have been set as founder of " + ci->name + " by " + source.GetNick() + ".";
 			TrySendMemo(source, ci, na->nc, msg);
+			if (email_founder_change)
+				TrySendEmail(source, na->nc, "Founder change for " + ci->name, msg);
 			return;
 		}
 
@@ -128,6 +177,8 @@ public:
 
 			Anope::string msg = "You have been set as successor of " + ci->name + " by " + source.GetNick() + ".";
 			TrySendMemo(source, ci, na->nc, msg);
+			if (email_successor_change)
+				TrySendEmail(source, na->nc, "Successor change for " + ci->name, msg);
 			return;
 		}
 	}
