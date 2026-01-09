@@ -1,5 +1,18 @@
-// Third-party Anope module implementing https://github.com/anope/anope/issues/503
-// Sends a memo when a user is added to a channel access list, or set as founder/successor.
+/*
+ * (C) 2025 reverse Juean Chevronnet
+ * Contact me at mike.chevronnet@gmail.com
+ * IRC: irc.irc4fun.net Port:+6697 (tls)
+ * Salon: #development
+ *
+ * Module m_memo_chanaccess created by reverse to send memos on chanaccess changes
+ *
+ * module { name = "m_memo_chanaccess" }
+ * 
+ * MemoServ: [NOTICE] You have 1 new memo.
+ * MemoServ: [NOTICE] Memo 1 from tChatCop (Fri Jan  9 12:49:53 2026 (37 seconds ago)).
+ * MemoServ: [NOTICE] To delete, type: /msg MemoServ DEL 1
+ * MemoServ: [NOTICE] You have been added to the access list for #!accueil by reverse (access: 5).
+ */
 
 #include "module.h"
 #include "modules/memoserv/service.h"
