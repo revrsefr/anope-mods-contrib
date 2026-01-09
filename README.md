@@ -12,6 +12,7 @@ Each module is independent. This README documents:
 - [Build & install](#build--install)
 - [Modules](#modules)
 	- [cs_topichistory](#cs_topichistory)
+	- [cs_akick_check](#cs_akick_check)
 	- [hs_nethost](#hs_nethost)
 	- [m_apiauth](#m_apiauth)
 	- [m_expirenotice](#m_expirenotice)
@@ -61,6 +62,17 @@ command { service = "ChanServ"; name = "TOPICHISTORY"; command = "chanserv/topic
 
 Config keys:
 - `maxhistory` (default: `3`) — max number of historical topics stored per channel.
+
+### cs_akick_check
+
+Re-check channel AKICKs after services startup/uplink sync, and when a user’s account state or visible identity changes.
+This helps ensure AKICKs apply immediately after identify/logout/group/nick/host/ident changes.
+
+Config:
+
+```conf
+module { name = "cs_akick_check" }
+```
 
 ### hs_nethost
 
