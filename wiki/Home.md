@@ -15,6 +15,3 @@ GitHub’s built-in Wiki (the `/wiki` URL) is a separate git repository (`<repo>
 ## Pages
 
 - [Modules](Modules.md)
-- [m_login](m_login.md)
-- [chanstats_plus](chanstats_plus.md)
-- [rpc_chanstatsplus](rpc_chanstatsplus.md)
