@@ -25,7 +25,3 @@ Config keys:
 - `prefix` (default: empty)
 - `suffix` (default: empty)
 - `hashprefix` (default: empty)
----
-<!-- nav -->
-[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
-<!-- /nav -->

@@ -17,7 +17,3 @@ module {
 
 command { service = "OperServ"; name = "CHANTRAP"; command = "operserv/chantrap"; permission = "operserv/chantrap"; }
 ```
----
-<!-- nav -->
-[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
-<!-- /nav -->

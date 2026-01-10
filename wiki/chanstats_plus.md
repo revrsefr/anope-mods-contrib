@@ -48,7 +48,3 @@ SQL schema notes:
 - Table: ``<prefix>chanstatsplus``
 - Primary key: `(chan, nick, period, period_start)`
 - Aggregate rows are stored with either `chan=''` (global-per-nick) or `nick=''` (per-channel aggregates).
----
-<!-- nav -->
-[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
-<!-- /nav -->
