@@ -10,4 +10,4 @@ Typically:
 
 ## Config
 
-See the full README section: [m_secure](../README.md#m_secure)
+See the full README section: [m_secure](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_secure)

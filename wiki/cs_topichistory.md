@@ -11,4 +11,4 @@ See README for the recommended `command { ... }` blocks.
 Key:
 - `maxhistory` — maximum number of topics stored per channel.
 
-See the full README section: [cs_topichistory](../README.md#cs_topichistory)
+See the full README section: [cs_topichistory](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#cs_topichistory)

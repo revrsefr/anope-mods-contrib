@@ -6,4 +6,4 @@ Send notices via email and/or MemoServ when nicks/channels are expiring soon or 
 
 See the README for the full config example and template variables.
 
-See the full README section: [m_expirenotice](../README.md#m_expirenotice)
+See the full README section: [m_expirenotice](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_expirenotice)

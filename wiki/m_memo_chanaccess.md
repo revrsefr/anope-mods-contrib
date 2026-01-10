@@ -11,4 +11,4 @@ Supports:
 
 See the README for the full list of options.
 
-See the full README section: [m_memo_chanaccess](../README.md#m_memo_chanaccess)
+See the full README section: [m_memo_chanaccess](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_memo_chanaccess)

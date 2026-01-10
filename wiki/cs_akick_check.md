@@ -12,4 +12,4 @@ module { name = "cs_akick_check" }
 
 - This module is intentionally low-config: you load it and it starts enforcing AKICK consistency.
 
-See the full README section: [cs_akick_check](../README.md#cs_akick_check)
+See the full README section: [cs_akick_check](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#cs_akick_check)

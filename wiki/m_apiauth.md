@@ -13,5 +13,5 @@ Typically:
 ## Config
 
 See README and the dedicated doc file:
-- [README section](../README.md#m_apiauth)
+- [README section](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_apiauth)
 - [m_apiauth.md](../m_apiauth.md)
