@@ -12,14 +12,13 @@
  *
  */
 
- #include "module.h"
- #include "modules/ns_cert.h"
- 
- static ServiceReference<NickServService> nickserv("NickServService", "NickServ");
+#include "module.h"
+#include "modules/nickserv/cert.h"
+#include "modules/nickserv/service.h"
  
  typedef std::map<Anope::string, ChannelStatus> NSLoginInfo;
  
- class NSLoginSvsnick
+class NSLoginSvsnick final
  {
  public:
      Reference<User> from;
@@ -34,16 +33,17 @@
  
  public:
      NSLoginRequest(Module *o, CommandSource &src, Command *c, const Anope::string &nick, const Anope::string &pass)
-         : IdentifyRequest(o, nick, pass, src.GetUser() ? src.GetUser()->ip.addr() : ""), source(src), cmd(c), user(nick) { }
+         : IdentifyRequest(o, nick, pass, src.ip)
+         , source(src)
+         , cmd(c)
+         , user(nick)
+     {
+     }
  
-     void OnSuccess() override
+     void OnSuccess(NickAlias *na) override
      {
          User *u = User::Find(user, true);
          if (!source.GetUser() || !source.service)
-             return;
- 
-         NickAlias *na = NickAlias::Find(user);
-         if (!na)
              return;
  
          Log(LOG_COMMAND, source, cmd) << "for " << na->nick;
@@ -51,14 +51,15 @@
          /* Nick is being held by us, release it */
          if (na->HasExt("HELD"))
          {
-             nickserv->Release(na);
-             source.Reply(_("Service's hold on \002%s\002 has been released."), na->nick.c_str());
+             if (NickServ::service)
+                 NickServ::service->Release(na);
+             source.Reply(_("Services' hold on \002%s\002 has been released."), na->nick.c_str());
          }
          if (!u)
          {
              if (IRCD->CanSVSNick)
                  IRCD->SendForceNickChange(source.GetUser(), GetAccount(), Anope::CurTime);
-             source.GetUser()->Identify(NickAlias::Find(user)); // Fix: Ensure correct type
+             source.GetUser()->Identify(na);
              Log(LOG_COMMAND, source, cmd) << "and identified to " << na->nick << " (" << na->nc->display << ")";
              source.Reply(_("Password accepted - you are now recognized."));
          }
@@ -66,11 +67,11 @@
          {
              if (!source.GetAccount() && na->nc->HasExt("NS_SECURE"))
              {
-                 source.GetUser()->Identify(NickAlias::Find(user)); // Fix: Ensure correct type
+                 source.GetUser()->Identify(na);
                  Log(LOG_COMMAND, source, cmd) << "and was automatically identified to " << u->Account()->display;
              }
  
-             if (Config->GetModule("ns_login").Get<bool>("restoreonrecover"))
+             if (Config->GetModule("m_login").Get<bool>("restoreonrecover"))
              {
                  if (!u->chans.empty())
                  {
@@ -96,7 +97,7 @@
          {
              if (!source.GetAccount() && na->nc->HasExt("NS_SECURE"))
              {
-                 source.GetUser()->Identify(NickAlias::Find(na->nick)); // Fix: Ensure correct type
+                 source.GetUser()->Identify(na);
                  Log(LOG_COMMAND, source, cmd) << "and was automatically identified to " << na->nick << " (" << na->nc->display << ")";
                  source.Reply(_("You have been logged in as \002%s\002."), na->nc->display.c_str());
              }
@@ -110,13 +111,13 @@
                  svs->to = u->nick;
              }
  
-             if (nickserv)
-                 nickserv->Collide(u, na);
+             if (NickServ::service)
+                 NickServ::service->Collide(u, na);
  
              if (IRCD->CanSVSNick)
              {
-                 if (nickserv)
-                     nickserv->Release(na);
+                 if (NickServ::service)
+                     NickServ::service->Release(na);
  
                  source.Reply(_("You have regained control of \002%s\002."), u->nick.c_str());
              }
@@ -168,7 +169,7 @@
              return;
          }
  
-         const NickAlias *na = NickAlias::Find(nick);
+         NickAlias *na = NickAlias::Find(nick);
  
          if (!na)
          {
@@ -183,7 +184,7 @@
  
          bool ok = (source.GetAccount() == na->nc);
  
-         NSCertList *cl = na->nc->GetExt<NSCertList>("certificates");
+         auto *cl = na->nc->GetExt<NickServ::CertList>(NICKSERV_CERT_EXT);
          if (source.GetUser() && !source.GetUser()->fingerprint.empty() && cl && cl->FindCert(source.GetUser()->fingerprint))
              ok = true;
  
@@ -197,7 +198,7 @@
          {
              NSLoginRequest req(owner, source, this, na->nick, pass);
              if (ok)
-                 req.OnSuccess();
+                 req.OnSuccess(na);
              else
                  req.OnFail();
          }
