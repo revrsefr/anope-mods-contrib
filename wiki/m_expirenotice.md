@@ -43,3 +43,7 @@ Template variables:
 - `%c` channel
 - `%t` expiry time
 - `%N` network name
+---
+<!-- nav -->
+[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
+<!-- /nav -->

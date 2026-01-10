@@ -14,3 +14,7 @@ module {
 
 Important note:
 - This module currently hardcodes the JWT secret and issuer inside the source. You must edit the module source to change them.
+---
+<!-- nav -->
+[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
+<!-- /nav -->

@@ -22,3 +22,7 @@ module {
 	allow_oauth2_type_as_jwt = false
 }
 ```
+---
+<!-- nav -->
+[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
+<!-- /nav -->

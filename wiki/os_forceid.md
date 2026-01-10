@@ -8,3 +8,7 @@ Config:
 module { name = "os_forceid" }
 command { service = "OperServ"; name = "FORCEID"; command = "operserv/forceid"; permission = "operserv/forceid"; }
 ```
+---
+<!-- nav -->
+[Home](https://github.com/revrsefr/anope-mods-contrib/wiki) · [Modules](https://github.com/revrsefr/anope-mods-contrib/wiki/Modules)
+<!-- /nav -->
