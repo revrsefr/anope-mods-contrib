@@ -1,26 +1,41 @@
-// Anope IRC Services <https://www.anope.org/>
+// Anope IRC Services module>
 //
 // SPDX-License-Identifier: GPL-2.0-only
 //
 // chanstats_plus: a third-party chanstats module optimized for low SQL round-trips.
 //
-// Key differences vs the legacy chanstats module:
-// - No stored procedures or SQL EVENTS required.
-// - Counters are buffered in memory and flushed periodically in batches.
-// - Periods are stored as separate rows keyed by a period start date.
+// Overview:
+// - Buffers per-message counters in memory and flushes them periodically in batched UPSERTs.
+// - Stores multiple periods as separate rows, keyed by a period start date:
+//   - daily:   YYYY-MM-DD (start of day)
+//   - weekly:  YYYY-MM-DD (start of week; Monday)
+//   - monthly: YYYY-MM-01 (start of month)
+//   - total:   1970-01-01
+// - Does not require stored procedures or SQL EVENT schedulers.
+//
+// What it tracks (per channel, and optionally per identified nick):
+// - lines, words, letters, actions (/me), smileys (happy/sad/other)
+// - kicks given / kicks received, channel mode changes, topic changes
+//
+// Commands / toggles:
+// - ChanServ: /msg ChanServ SET <channel> CHANSTATSPLUS {ON|OFF}
+// - NickServ: /msg NickServ SET CHANSTATSPLUS {ON|OFF}
+//   Only identified users who enable the NickServ option are recorded as per-nick stats.
 //
 // Config example:
 //
-// <module name="chanstats_plus">
-//   engine = "mysql/main"
+// module {
+//   name = "rpc_chanstatsplus"
+//   engine = "mysql/dbstats"
 //   prefix = "anope_"
 //   flushinterval = 5s
 //   maxpending = 100000
 //   maxrowsperquery = 500
-//   smileyshappy = ":) :-) :D"
-//   smileyssad = ":( :-("
-//   smileysother = ";) ;-)"
-// </module>
+//   smileyshappy = { ":)" ":-)" ":D" }
+//   smileyssad = { ":(" ":-(" }
+//   smileysother = { ";)" ";-)" }
+// }
+//
 
 #include "module.h"
 #include "modules/sql.h"
