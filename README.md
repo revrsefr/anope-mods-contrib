@@ -2,6 +2,12 @@
 
 Collection of third-party modules for **Anope IRC Services 2.1.x**.
 
+Wiki pages (in-repo):
+- Start here: `wiki/Home.md`
+- Index: `wiki/Modules.md`
+
+GitHub note: the `/wiki` tab/URL is GitHub’s built-in Wiki feature. If it’s disabled, use the `wiki/` folder links above.
+
 Each module is independent. This README documents:
 - what each module does
 - required `command { ... }` blocks (if any)
