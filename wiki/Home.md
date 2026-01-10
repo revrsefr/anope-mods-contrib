@@ -10,7 +10,3 @@ This wiki is published via GitHub Wiki and is also mirrored in the main reposito
 2. Rebuild and install modules.
 3. Add the required `module { ... }` block (and any `command { ... }` blocks).
 4. Reload config (`/msg OperServ RELOAD`) or restart services.
-
-## Pages
-
-- [Modules](Modules.md)
