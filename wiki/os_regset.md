@@ -1,7 +1,10 @@
 # os_regset
 
-Adds OperServ command(s) to set/unset properties on registered accounts.
+Modify the registration time of a nick or channel.
 
-## Config
+Config:
 
-See the full README section: [os_regset](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#os_regset)
+```conf
+module { name = "os_regset" }
+command { service = "OperServ"; name = "REGSET"; command = "operserv/regset"; permission = "operserv/regset"; }
+```

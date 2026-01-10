@@ -1,15 +1,10 @@
 # m_youtube
 
-BotServ helper that detects YouTube links and replies with metadata.
+BotServ command that detects YouTube links and replies with metadata (title/duration/views).
 
-## Dependencies
-
-Typically:
+Extra deps:
 - libcurl
 - rapidjson
 
-## Notes
-
-Some versions hardcode the API key in source. See README for details.
-
-See the full README section: [m_youtube](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_youtube)
+Important note:
+- The YouTube API key is currently hardcoded in the source (`api_key = "API-KEY"`). You must edit the module source to set a real API key.

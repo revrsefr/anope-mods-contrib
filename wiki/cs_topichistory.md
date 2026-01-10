@@ -1,14 +1,14 @@
 # cs_topichistory
 
-Keeps a per-channel topic history and allows listing/setting from the stored history.
+Keep a per-channel topic history and allow listing/setting from the history.
 
-## Commands
+Commands:
 
-See README for the recommended `command { ... }` blocks.
+```conf
+module { name = "cs_topichistory"; maxhistory = 3; }
+command { service = "ChanServ"; name = "SET TOPICHISTORY"; command = "chanserv/set/topichistory"; }
+command { service = "ChanServ"; name = "TOPICHISTORY"; command = "chanserv/topichistory"; group = "chanserv/management"; }
+```
 
-## Config
-
-Key:
-- `maxhistory` — maximum number of topics stored per channel.
-
-See the full README section: [cs_topichistory](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#cs_topichistory)
+Config keys:
+- `maxhistory` (default: `3`) — max number of historical topics stored per channel.

@@ -1,9 +1,24 @@
 # ns_sasl_oauthbearer
 
-Adds SASL `OAUTHBEARER` support (NickServ-side) for OAuth2-style token authentication.
+Implements IRCv3 SASL `OAUTHBEARER` and the newer IRCv3 bearer format, validating JWTs server-side.
 
-## Config
+Extra deps:
+- OpenSSL
+- jwt-cpp
 
-See the README section for required parameters (issuer/audience/public keys or introspection, depending on implementation).
+Config:
 
-See the full README section: [ns_sasl_oauthbearer](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#ns_sasl_oauthbearer)
+```conf
+module {
+	name = "ns_sasl_oauthbearer"
+
+	jwt_secret = "..."
+	jwt_issuer = "..."
+
+	# Auto-create accounts when the token subject (sub) doesn't exist yet.
+	autocreate = true
+
+	# For IRCv3 bearer format: allow token_type=oauth2 to be treated as jwt.
+	allow_oauth2_type_as_jwt = false
+}
+```

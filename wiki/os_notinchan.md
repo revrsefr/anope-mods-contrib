@@ -1,7 +1,20 @@
 # os_notinchan
 
-Adds OperServ command(s) to list users not in any channels.
+OperServ command to list/kill/akill/tempshun/join users who are not in any channel.
 
-## Config
+Config:
 
-See the full README section: [os_notinchan](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#os_notinchan)
+```conf
+module {
+	name = "os_notinchan"
+
+	tshunreason = "Rejoin us when you are willing to join us publicly."
+	killreason = "Not In Channel Management"
+	akillreason = "Not In Channel Management"
+
+	akillexpire = "5m"
+	idlechan = "#idle"
+}
+
+command { service = "OperServ"; name = "NOTINCHAN"; command = "operserv/notinchan"; permission = "operserv/akill"; }
+```

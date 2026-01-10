@@ -1,7 +1,10 @@
 # os_forceid
 
-Adds OperServ command(s) for force-identifying a user to an account.
+Allows an operator to force-identify a user to their matching nick.
 
-## Config
+Config:
 
-See the full README section: [os_forceid](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#os_forceid)
+```conf
+module { name = "os_forceid" }
+command { service = "OperServ"; name = "FORCEID"; command = "operserv/forceid"; permission = "operserv/forceid"; }
+```

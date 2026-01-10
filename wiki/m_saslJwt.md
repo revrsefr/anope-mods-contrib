@@ -1,9 +1,16 @@
 # m_saslJwt
 
-Adds JWT-based SASL mechanisms/behavior.
+Adds SASL mechanisms for JWT (and an enhanced `PLAIN` handler that can accept JWT-like tokens).
+This module also has a configurable SASL “agent” pseudoclient.
 
-## Config
+Config:
 
-See the README section for the available settings.
+```conf
+module {
+	name = "m_saslJwt"
+	agent = "NickServ"  # default
+}
+```
 
-See the full README section: [m_saslJwt](https://github.com/revrsefr/anope-mods-contrib/blob/main/README.md#m_sasljwt)
+Important note:
+- This module currently hardcodes the JWT secret and issuer inside the source. You must edit the module source to change them.

@@ -2,8 +2,7 @@
 
 Wikis provide a place in your repository to lay out the roadmap of your project, show the current status, and document software better, together.
 
-Note: this repository currently stores wiki-style pages in the main repo under the `wiki/` folder.
-GitHub’s built-in Wiki (the `/wiki` URL) is a separate git repository (`<repo>.wiki.git`) and needs to be enabled in the repo settings to use it.
+This wiki is published via GitHub Wiki and is also mirrored in the main repository under the `wiki/` folder.
 
 ## Quick start
 
