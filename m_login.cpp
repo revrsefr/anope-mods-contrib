@@ -16,7 +16,7 @@
 #include "modules/nickserv/cert.h"
 #include "modules/nickserv/service.h"
  
- typedef std::map<Anope::string, ChannelStatus> NSLoginInfo;
+typedef std::map<Anope::string, ChannelStatus> NSLoginInfo;
  
 class NSLoginSvsnick final
  {
@@ -42,35 +42,32 @@ class NSLoginSvsnick final
  
      void OnSuccess(NickAlias *na) override
      {
-         User *u = User::Find(user, true);
+        User *u = User::Find(user, true);
          if (!source.GetUser() || !source.service)
              return;
  
          Log(LOG_COMMAND, source, cmd) << "for " << na->nick;
  
-         /* Nick is being held by us, release it */
+        /* Nick is being held by us, release it */
          if (na->HasExt("HELD"))
          {
              if (NickServ::service)
                  NickServ::service->Release(na);
              source.Reply(_("Services' hold on \002%s\002 has been released."), na->nick.c_str());
          }
-         if (!u)
+
+        // After successful authentication always identify the user to the target account.
+        source.GetUser()->Identify(na);
+
+        if (!u)
+        {
+            if (IRCD->CanSVSNick)
+                IRCD->SendForceNickChange(source.GetUser(), na->nick, Anope::CurTime);
+            Log(LOG_COMMAND, source, cmd) << "and identified to " << na->nick << " (" << na->nc->display << ")";
+            source.Reply(_("Password accepted - you are now recognized."));
+        }
+        else if (u->Account() == na->nc)
          {
-             if (IRCD->CanSVSNick)
-                 IRCD->SendForceNickChange(source.GetUser(), GetAccount(), Anope::CurTime);
-             source.GetUser()->Identify(na);
-             Log(LOG_COMMAND, source, cmd) << "and identified to " << na->nick << " (" << na->nc->display << ")";
-             source.Reply(_("Password accepted - you are now recognized."));
-         }
-         else if (u->Account() == na->nc)
-         {
-             if (!source.GetAccount() && na->nc->HasExt("NS_SECURE"))
-             {
-                 source.GetUser()->Identify(na);
-                 Log(LOG_COMMAND, source, cmd) << "and was automatically identified to " << u->Account()->display;
-             }
- 
              if (Config->GetModule("m_login").Get<bool>("restoreonrecover"))
              {
                  if (!u->chans.empty())
@@ -91,17 +88,10 @@ class NSLoginSvsnick final
              source.Reply(_("Ghost with your nick has been killed."));
  
              if (IRCD->CanSVSNick)
-                 IRCD->SendForceNickChange(source.GetUser(), GetAccount(), Anope::CurTime);
+                IRCD->SendForceNickChange(source.GetUser(), na->nick, Anope::CurTime);
          }
          else
          {
-             if (!source.GetAccount() && na->nc->HasExt("NS_SECURE"))
-             {
-                 source.GetUser()->Identify(na);
-                 Log(LOG_COMMAND, source, cmd) << "and was automatically identified to " << na->nick << " (" << na->nc->display << ")";
-                 source.Reply(_("You have been logged in as \002%s\002."), na->nc->display.c_str());
-             }
- 
              u->SendMessage(source.service, _("This nickname has been recovered by %s."), source.GetNick().c_str());
  
              if (IRCD->CanSVSNick)
@@ -154,6 +144,7 @@ class NSLoginSvsnick final
          this->SetDesc(_("Identifies you to services and regains control of your nick"));
          this->SetSyntax(_("\037nickname\037 [\037password\037]"));
          this->AllowUnregistered(true);
+        this->RequireUser(true);
      }
  
      void Execute(CommandSource &source, const std::vector<Anope::string> &params) override
@@ -208,14 +199,71 @@ class NSLoginSvsnick final
  class NSLogin final : public Module
  {
      CommandNSLogin commandnslogin;
+    PrimitiveExtensibleItem<NSLoginInfo> login;
+    PrimitiveExtensibleItem<NSLoginSvsnick> login_svsnick;
  
  public:
      NSLogin(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
-         commandnslogin(this)
+        commandnslogin(this)
+        , login(this, "login")
+        , login_svsnick(this, "login_svsnick")
      {
          if (Config->GetModule("nickserv").Get<bool>("nonicknameownership"))
              throw ModuleException(modname + " cannot be used with options:nonicknameownership enabled");
      }
+
+    void OnUserNickChange(User *u, const Anope::string &oldnick) override
+    {
+        if (Config->GetModule(this).Get<bool>("restoreonrecover"))
+        {
+            NSLoginInfo *ei = login.Get(u);
+            BotInfo *NickServ = Config->GetClient("NickServ");
+
+            if (ei != NULL && NickServ != NULL)
+                for (NSLoginInfo::iterator it = ei->begin(), it_end = ei->end(); it != it_end;)
+                {
+                    Channel *c = Channel::Find(it->first);
+                    const Anope::string &cname = it->first;
+                    ++it;
+
+                    /* User might already be on the channel */
+                    if (u->FindChannel(c))
+                        this->OnJoinChannel(u, c);
+                    else if (IRCD->CanSVSJoin)
+                        IRCD->SendSVSJoin(NickServ, u, cname, "");
+                }
+        }
+
+        NSLoginSvsnick *svs = login_svsnick.Get(u);
+        if (svs)
+        {
+            if (svs->from)
+                IRCD->SendForceNickChange(svs->from, svs->to, Anope::CurTime);
+            login_svsnick.Unset(u);
+        }
+    }
+
+    void OnJoinChannel(User *u, Channel *c) override
+    {
+        if (Config->GetModule(this).Get<bool>("restoreonrecover"))
+        {
+            NSLoginInfo *ei = login.Get(u);
+
+            if (ei != NULL)
+            {
+                NSLoginInfo::iterator it = ei->find(c->name);
+                if (it != ei->end())
+                {
+                    for (auto mode : it->second.Modes())
+                        c->SetMode(c->WhoSends(), ModeManager::FindChannelModeByChar(mode), u->GetUID());
+
+                    ei->erase(it);
+                    if (ei->empty())
+                        login.Unset(u);
+                }
+            }
+        }
+    }
  };
  
  MODULE_INIT(NSLogin)
