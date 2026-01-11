@@ -53,4 +53,4 @@ Notes:
 
 ## Services
 
-- [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — HelpServ pseudo-client (help topics + search + stats + tickets/paging).
+- [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — HelpServ pseudo-client (help topics + search + stats + tickets/paging; configurable NOTICE/PRIVMSG replies; cooldown-map pruning; STATS usage counters).

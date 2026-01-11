@@ -42,4 +42,4 @@
 - [m_youtube](https://github.com/revrsefr/anope-mods-contrib/wiki/m_youtube)
 
 ### Services
-- [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv)
+- [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — tickets/paging + configurable replies + cooldown pruning

@@ -63,6 +63,13 @@ module
   helpme_cooldown = 120
   request_cooldown = 60
 
+  # Cooldown pruning (optional, defaults shown)
+  # Helps prevent long-run growth if many unique users/hosts hit HELPME/REQUEST.
+  # These support suffixes: s/m/h/d/w.
+  cooldown_prune_interval = 1h
+  cooldown_prune_ttl = 24h
+  cooldown_prune_max_size = 5000
+
   # When enabled, REQUEST also pages staff_target
   page_on_request = yes
 
@@ -129,10 +136,20 @@ Admin:
 
 Stats:
 - `STATS` also includes ticket queue stats (open vs waiting, priority breakdown, assignment counts, oldest tickets).
+- `STATS` also includes per-command usage counters (useful to find what to optimize).
 
 ## Notes
 
 - `reply_method = "privmsg"` forces HelpServ command output to be sent via `PRIVMSG` (instead of being influenced by user-side preferences).
+
+## Cooldown pruning
+
+HelpServ maintains internal cooldown maps for `HELPME` and `REQUEST` throttling. On a busy network with many unique keys (e.g. users/hosts), those maps can grow without bound over time.
+
+The following settings control pruning:
+- `cooldown_prune_interval` (default `1h`): how often to prune normally
+- `cooldown_prune_ttl` (default `24h`): drop entries older than this
+- `cooldown_prune_max_size` (default `5000`): if the maps exceed this size, prune regardless of interval
 
 ## Queue behavior
 
