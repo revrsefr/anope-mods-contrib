@@ -50,3 +50,7 @@ Notes:
 ## Fun
 
 - [m_youtube](https://github.com/revrsefr/anope-mods-contrib/wiki/m_youtube) — BotServ helper that replies with YouTube metadata.
+
+## Services
+
+- [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — HelpServ pseudo-client (help topics + search + stats + tickets/paging).
