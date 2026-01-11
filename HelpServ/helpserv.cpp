@@ -138,6 +138,9 @@ void CommandHelpServHelpMe::Execute(CommandSource& source, const std::vector<Ano
 	if (!this->hs.HelpServ)
 		return;
 
+	++this->hs.helpme_requests;
+	this->hs.MaybeSaveStats();
+
 	Anope::string topic = params[0];
 	topic.trim();
 	Anope::string msg = params.size() > 1 ? params[1] : "";
@@ -196,6 +199,9 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 {
 	if (!this->hs.HelpServ)
 		return;
+
+	++this->hs.request_requests;
+	this->hs.MaybeSaveStats();
 
 	this->hs.PruneExpiredTickets();
 
@@ -315,6 +321,9 @@ void CommandHelpServCancel::Execute(CommandSource& source, const std::vector<Ano
 		return;
 	}
 
+	++this->hs.cancel_requests;
+	this->hs.MaybeSaveStats();
+
 	this->hs.PruneExpiredTickets();
 
 	auto* t = this->hs.FindOpenTicketByAccountKey(source.GetAccount()->display);
@@ -356,6 +365,9 @@ void CommandHelpServList::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+
+	++this->hs.list_requests;
+	this->hs.MaybeSaveStats();
 
 	this->hs.PruneExpiredTickets();
 
@@ -437,6 +449,9 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+
+	++this->hs.close_requests;
+	this->hs.MaybeSaveStats();
 
 	this->hs.PruneExpiredTickets();
 
@@ -525,6 +540,9 @@ void CommandHelpServTake::Execute(CommandSource& source, const std::vector<Anope
 		return;
 	}
 
+	++this->hs.take_requests;
+	this->hs.MaybeSaveStats();
+
 	this->hs.PruneExpiredTickets();
 
 	uint64_t id = 0;
@@ -597,6 +615,9 @@ void CommandHelpServAssign::Execute(CommandSource& source, const std::vector<Ano
 		return;
 	}
 
+	++this->hs.assign_requests;
+	this->hs.MaybeSaveStats();
+
 	this->hs.PruneExpiredTickets();
 
 	uint64_t id = 0;
@@ -655,6 +676,9 @@ void CommandHelpServNote::Execute(CommandSource& source, const std::vector<Anope
 		return;
 	}
 
+	++this->hs.note_requests;
+	this->hs.MaybeSaveStats();
+
 	this->hs.PruneExpiredTickets();
 
 	uint64_t id = 0;
@@ -712,6 +736,9 @@ void CommandHelpServView::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+
+	++this->hs.view_requests;
+	this->hs.MaybeSaveStats();
 
 	this->hs.PruneExpiredTickets();
 
@@ -783,6 +810,9 @@ void CommandHelpServNext::Execute(CommandSource& source, const std::vector<Anope
 		return;
 	}
 
+	++this->hs.next_requests;
+	this->hs.MaybeSaveStats();
+
 	this->hs.PruneExpiredTickets();
 
 	bool include_waiting = false;
@@ -839,6 +869,9 @@ void CommandHelpServPriority::Execute(CommandSource& source, const std::vector<A
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+
+	++this->hs.priority_requests;
+	this->hs.MaybeSaveStats();
 
 	if (params.size() < 2)
 	{
@@ -907,6 +940,9 @@ void CommandHelpServWait::Execute(CommandSource& source, const std::vector<Anope
 		return;
 	}
 
+	++this->hs.wait_requests;
+	this->hs.MaybeSaveStats();
+
 	if (params.empty())
 	{
 		this->hs.Reply(source, "Syntax: WAIT #id [reason]");
@@ -972,6 +1008,9 @@ void CommandHelpServUnwait::Execute(CommandSource& source, const std::vector<Ano
 		return;
 	}
 
+	++this->hs.unwait_requests;
+	this->hs.MaybeSaveStats();
+
 	if (params.empty())
 	{
 		this->hs.Reply(source, "Syntax: UNWAIT #id");
@@ -1025,6 +1064,9 @@ void CommandHelpServNotify::Execute(CommandSource& source, const std::vector<Ano
 {
 	if (!this->hs.HelpServ)
 		return;
+
+	++this->hs.notify_requests;
+	this->hs.MaybeSaveStats();
 
 	if (!source.HasPriv(this->hs.notify_priv))
 	{

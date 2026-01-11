@@ -311,6 +311,23 @@ void HelpServCore::SendStats(CommandSource& source)
 		static_cast<unsigned long long>(this->search_requests),
 		static_cast<unsigned long long>(this->search_hits),
 		static_cast<unsigned long long>(this->search_misses));
+	this->ReplyF(source, "Tickets cmd usage: REQUEST %llu, CANCEL %llu, LIST %llu, NEXT %llu, VIEW %llu",
+		static_cast<unsigned long long>(this->request_requests),
+		static_cast<unsigned long long>(this->cancel_requests),
+		static_cast<unsigned long long>(this->list_requests),
+		static_cast<unsigned long long>(this->next_requests),
+		static_cast<unsigned long long>(this->view_requests));
+	this->ReplyF(source, "Staff cmd usage: TAKE %llu, ASSIGN %llu, NOTE %llu, CLOSE %llu, PRIORITY %llu, WAIT %llu, UNWAIT %llu",
+		static_cast<unsigned long long>(this->take_requests),
+		static_cast<unsigned long long>(this->assign_requests),
+		static_cast<unsigned long long>(this->note_requests),
+		static_cast<unsigned long long>(this->close_requests),
+		static_cast<unsigned long long>(this->priority_requests),
+		static_cast<unsigned long long>(this->wait_requests),
+		static_cast<unsigned long long>(this->unwait_requests));
+	this->ReplyF(source, "Other cmd usage: HELPME %llu, NOTIFY %llu",
+		static_cast<unsigned long long>(this->helpme_requests),
+		static_cast<unsigned long long>(this->notify_requests));
 
 	if (!this->topic_requests.empty())
 	{
@@ -609,6 +626,34 @@ void HelpServCore::LoadStatsFromFile()
 			this->search_misses = n;
 		else if (key.equals_ci("unknown_topics"))
 			this->unknown_topics = n;
+		else if (key.equals_ci("helpme_requests"))
+			this->helpme_requests = n;
+		else if (key.equals_ci("request_requests"))
+			this->request_requests = n;
+		else if (key.equals_ci("cancel_requests"))
+			this->cancel_requests = n;
+		else if (key.equals_ci("list_requests"))
+			this->list_requests = n;
+		else if (key.equals_ci("next_requests"))
+			this->next_requests = n;
+		else if (key.equals_ci("view_requests"))
+			this->view_requests = n;
+		else if (key.equals_ci("take_requests"))
+			this->take_requests = n;
+		else if (key.equals_ci("assign_requests"))
+			this->assign_requests = n;
+		else if (key.equals_ci("note_requests"))
+			this->note_requests = n;
+		else if (key.equals_ci("close_requests"))
+			this->close_requests = n;
+		else if (key.equals_ci("priority_requests"))
+			this->priority_requests = n;
+		else if (key.equals_ci("wait_requests"))
+			this->wait_requests = n;
+		else if (key.equals_ci("unwait_requests"))
+			this->unwait_requests = n;
+		else if (key.equals_ci("notify_requests"))
+			this->notify_requests = n;
 		else if (key.length() > 6 && key.substr(0, 6).equals_ci("topic."))
 		{
 			const auto t = NormalizeTopic(key.substr(6));
@@ -637,6 +682,20 @@ void HelpServCore::SaveStatsToFile()
 	out << "search_requests=" << this->search_requests << "\n";
 	out << "search_hits=" << this->search_hits << "\n";
 	out << "search_misses=" << this->search_misses << "\n";
+	out << "helpme_requests=" << this->helpme_requests << "\n";
+	out << "request_requests=" << this->request_requests << "\n";
+	out << "cancel_requests=" << this->cancel_requests << "\n";
+	out << "list_requests=" << this->list_requests << "\n";
+	out << "next_requests=" << this->next_requests << "\n";
+	out << "view_requests=" << this->view_requests << "\n";
+	out << "take_requests=" << this->take_requests << "\n";
+	out << "assign_requests=" << this->assign_requests << "\n";
+	out << "note_requests=" << this->note_requests << "\n";
+	out << "close_requests=" << this->close_requests << "\n";
+	out << "priority_requests=" << this->priority_requests << "\n";
+	out << "wait_requests=" << this->wait_requests << "\n";
+	out << "unwait_requests=" << this->unwait_requests << "\n";
+	out << "notify_requests=" << this->notify_requests << "\n";
 	for (const auto& [topic, count] : this->topic_requests)
 		out << "topic." << topic << "=" << count << "\n";
 	out.close();
