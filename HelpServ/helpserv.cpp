@@ -227,7 +227,7 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 	}
 	last = now;
 
-	const auto account_key = NormalizeTopic(source.GetAccount()->display);
+		const auto account_key = HelpServCore::NormalizeTopic(source.GetAccount()->display);
 	auto* existing = this->hs.FindOpenTicketByAccountKey(account_key);
 	if (existing)
 	{
@@ -269,7 +269,7 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 	t.updated = now;
 
 	this->hs.tickets_by_id[t.id] = t;
-	this->hs.open_ticket_by_account[NormalizeTopic(t.account)] = t.id;
+		this->hs.open_ticket_by_account[HelpServCore::NormalizeTopic(t.account)] = t.id;
 	this->hs.SaveTicketsToFile();
 
 	Anope::string oper = source.GetNick();
@@ -325,7 +325,7 @@ void CommandHelpServCancel::Execute(CommandSource& source, const std::vector<Ano
 	}
 
 	const auto id = t->id;
-	this->hs.open_ticket_by_account.erase(NormalizeTopic(t->account));
+		this->hs.open_ticket_by_account.erase(HelpServCore::NormalizeTopic(t->account));
 	this->hs.tickets_by_id.erase(id);
 	this->hs.SaveTicketsToFile();
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: cancelled \002#%llu\002 by %s", static_cast<unsigned long long>(id), source.GetNick().c_str()));
@@ -467,7 +467,7 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 	const auto account = t->account;
 	const auto nick = t->nick;
 
-	this->hs.open_ticket_by_account.erase(NormalizeTopic(account));
+		this->hs.open_ticket_by_account.erase(HelpServCore::NormalizeTopic(account));
 	this->hs.tickets_by_id.erase(id);
 	this->hs.SaveTicketsToFile();
 
