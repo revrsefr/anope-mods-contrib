@@ -10,6 +10,7 @@ Features:
   - `HELPME <topic> [message]` pages staff immediately
   - Ticket queue: `REQUEST <topic> [message]` + `CANCEL`
   - Staff tools: `LIST [filter]` + `VIEW #id` + `TAKE #id` + `ASSIGN #id <nick|none>` + `NOTE #id <text>` + `CLOSE <#id|nick|account> [reason]`
+  - Queue workflow: `NEXT [ALL] [filter]` + `PRIORITY #id <low|normal|high>` + `WAIT #id [reason]` + `UNWAIT #id`
 
 ## Install
 
@@ -117,12 +118,31 @@ Staff:
 - `NOTE #id <text>` (add internal notes)
 - `CLOSE <#id|nick|account> [reason]` (closes a ticket)
 
+Queue workflow:
+- `NEXT [ALL] [filter]` (shows the next ticket in the queue)
+- `PRIORITY #id <low|normal|high>` (set ticket priority)
+- `WAIT #id [reason]` (mark ticket waiting for the user)
+- `UNWAIT #id` (mark ticket open again)
+
 Admin:
 - `NOTIFY [notice|privmsg]` (controls how HelpServ replies; requires `notify_priv`)
 
 ## Notes
 
 - `reply_method = "privmsg"` forces HelpServ command output to be sent via `PRIVMSG` (instead of being influenced by user-side preferences).
+
+## Queue behavior
+
+Tickets are ordered like a queue:
+- State first: `open` tickets before `waiting` tickets
+- Priority next: `high` before `normal` before `low`
+- Age last: older tickets first (by last update time when present)
+
+Notes:
+- `LIST` shows both `open` and `waiting` tickets, with a `[priority/state]` marker.
+- `NEXT` shows only `open` tickets by default; use `NEXT ALL` to include `waiting` tickets.
+- `WAIT` optionally records the reason as a note and moves the ticket to `waiting`.
+- `UNWAIT` clears the wait reason and returns the ticket to `open`.
 
 ## Persistence (flatfile DB)
 

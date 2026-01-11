@@ -238,6 +238,46 @@ public:
 	bool OnHelp(CommandSource& source, const Anope::string& subcommand) override;
 };
 
+class CommandHelpServNext final : public Command
+{
+	HelpServCore& hs;
+
+public:
+	CommandHelpServNext(Module* creator, HelpServCore& parent);
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override;
+	bool OnHelp(CommandSource& source, const Anope::string& subcommand) override;
+};
+
+class CommandHelpServPriority final : public Command
+{
+	HelpServCore& hs;
+
+public:
+	CommandHelpServPriority(Module* creator, HelpServCore& parent);
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override;
+	bool OnHelp(CommandSource& source, const Anope::string& subcommand) override;
+};
+
+class CommandHelpServWait final : public Command
+{
+	HelpServCore& hs;
+
+public:
+	CommandHelpServWait(Module* creator, HelpServCore& parent);
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override;
+	bool OnHelp(CommandSource& source, const Anope::string& subcommand) override;
+};
+
+class CommandHelpServUnwait final : public Command
+{
+	HelpServCore& hs;
+
+public:
+	CommandHelpServUnwait(Module* creator, HelpServCore& parent);
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override;
+	bool OnHelp(CommandSource& source, const Anope::string& subcommand) override;
+};
+
 class CommandHelpServNotify final : public Command
 {
 	HelpServCore& hs;
@@ -258,6 +298,9 @@ class HelpServCore final : public Module
 		Anope::string requester;
 		Anope::string topic;
 		Anope::string message;
+		int priority = 1; // 0=low, 1=normal, 2=high
+		Anope::string state = "open"; // open|waiting
+		Anope::string wait_reason;
 		Anope::string assigned;
 		std::vector<Anope::string> notes;
 		time_t created = 0;
@@ -308,7 +351,121 @@ class HelpServCore final : public Module
 	CommandHelpServAssign command_assign;
 	CommandHelpServNote command_note;
 	CommandHelpServView command_view;
+	CommandHelpServNext command_next;
+	CommandHelpServPriority command_priority;
+	CommandHelpServWait command_wait;
+	CommandHelpServUnwait command_unwait;
 	CommandHelpServNotify command_notify;
+
+	static int ClampPriority(int p)
+	{
+		if (p < 0)
+			return 0;
+		if (p > 2)
+			return 2;
+		return p;
+	}
+
+	static Anope::string PriorityString(int p)
+	{
+		switch (ClampPriority(p))
+		{
+			case 0: return "low";
+			case 2: return "high";
+			default: return "normal";
+		}
+	}
+
+	static bool ParsePriority(const Anope::string& in, int& out)
+	{
+		Anope::string s = in;
+		s.trim();
+		if (s.empty())
+			return false;
+		if (s.equals_ci("low"))
+		{
+			out = 0;
+			return true;
+		}
+		if (s.equals_ci("normal") || s.equals_ci("med") || s.equals_ci("medium"))
+		{
+			out = 1;
+			return true;
+		}
+		if (s.equals_ci("high"))
+		{
+			out = 2;
+			return true;
+		}
+
+		bool all_digits = true;
+		for (size_t i = 0; i < s.length(); ++i)
+			if (s[i] < '0' || s[i] > '9')
+				all_digits = false;
+		if (!all_digits)
+			return false;
+		uint64_t n = 0;
+		if (!ParseU64(s, n))
+			return false;
+		out = ClampPriority(static_cast<int>(n));
+		return true;
+	}
+
+	static int StateSortKey(const Anope::string& state)
+	{
+		if (state.equals_ci("waiting") || state.equals_ci("wait"))
+			return 1;
+		return 0;
+	}
+
+	static Anope::string NormalizeState(const Anope::string& state)
+	{
+		if (state.equals_ci("waiting") || state.equals_ci("wait"))
+			return "waiting";
+		return "open";
+	}
+
+	static bool TicketMatchesFilter(const Ticket& t, const Anope::string& filter)
+	{
+		if (filter.empty())
+			return true;
+		const auto match = ContainsCaseInsensitive;
+		if (match(t.nick, filter) || match(t.account, filter) || match(t.topic, filter)
+			|| match(t.message, filter) || match(t.requester, filter) || match(t.assigned, filter)
+			|| match(t.state, filter) || match(t.wait_reason, filter))
+			return true;
+		return false;
+	}
+
+	std::vector<Ticket*> GetSortedTickets(const Anope::string& filter, bool include_waiting)
+	{
+		std::vector<Ticket*> out;
+		out.reserve(this->tickets_by_id.size());
+		for (auto& [_, t] : this->tickets_by_id)
+		{
+			if (!TicketMatchesFilter(t, filter))
+				continue;
+			if (!include_waiting && NormalizeState(t.state).equals_ci("waiting"))
+				continue;
+			out.push_back(&t);
+		}
+		std::sort(out.begin(), out.end(), [](const Ticket* a, const Ticket* b) {
+			const int as = StateSortKey(a->state);
+			const int bs = StateSortKey(b->state);
+			if (as != bs)
+				return as < bs;
+			const int ap = ClampPriority(a->priority);
+			const int bp = ClampPriority(b->priority);
+			if (ap != bp)
+				return ap > bp;
+			const auto at = (a->updated ? a->updated : a->created);
+			const auto bt = (b->updated ? b->updated : b->created);
+			if (at != bt)
+				return at < bt;
+			return a->id < b->id;
+		});
+		return out;
+	}
 
 	void Reply(CommandSource& source, const Anope::string& msg)
 	{
@@ -329,6 +486,22 @@ class HelpServCore final : public Module
 		if (!source.msgid.empty())
 			tags["+draft/reply"] = source.msgid;
 
+		LineWrapper lw(Language::Translate(u, msg.c_str()));
+		for (Anope::string line; lw.GetLine(line); )
+		{
+			if (this->reply_with_notice)
+				IRCD->SendNotice(*this->HelpServ, u->GetUID(), line, tags);
+			else
+				IRCD->SendPrivmsg(*this->HelpServ, u->GetUID(), line, tags);
+		}
+	}
+
+	void SendToUser(User* u, const Anope::string& msg)
+	{
+		if (!this->HelpServ.operator bool() || !u)
+			return;
+
+		Anope::map<Anope::string> tags;
 		LineWrapper lw(Language::Translate(u, msg.c_str()));
 		for (Anope::string line; lw.GetLine(line); )
 		{
@@ -776,6 +949,16 @@ class HelpServCore final : public Module
 				t.topic = val;
 			else if (field.equals_ci("message"))
 				t.message = val;
+			else if (field.equals_ci("priority"))
+			{
+				uint64_t n2 = 0;
+				if (ParseU64(val, n2))
+					t.priority = ClampPriority(static_cast<int>(n2));
+			}
+			else if (field.equals_ci("state"))
+				t.state = NormalizeState(val);
+			else if (field.equals_ci("wait_reason"))
+				t.wait_reason = val;
 			else if (field.equals_ci("assigned"))
 				t.assigned = val;
 			else if (field.length() > 5 && field.substr(0, 5).equals_ci("note."))
@@ -841,7 +1024,7 @@ class HelpServCore final : public Module
 		}
 
 		out << "# HelpServ tickets\n";
-		out << "version=1\n";
+		out << "version=2\n";
 		out << "next_ticket_id=" << this->next_ticket_id << "\n";
 		for (const auto& [id, t] : this->tickets_by_id)
 		{
@@ -850,6 +1033,9 @@ class HelpServCore final : public Module
 			out << "ticket." << id << ".requester=" << EscapeValue(t.requester) << "\n";
 			out << "ticket." << id << ".topic=" << EscapeValue(t.topic) << "\n";
 			out << "ticket." << id << ".message=" << EscapeValue(t.message) << "\n";
+			out << "ticket." << id << ".priority=" << static_cast<uint64_t>(ClampPriority(t.priority)) << "\n";
+			out << "ticket." << id << ".state=" << EscapeValue(NormalizeState(t.state)) << "\n";
+			out << "ticket." << id << ".wait_reason=" << EscapeValue(t.wait_reason) << "\n";
 			out << "ticket." << id << ".assigned=" << EscapeValue(t.assigned) << "\n";
 			out << "ticket." << id << ".created=" << static_cast<uint64_t>(t.created) << "\n";
 			out << "ticket." << id << ".updated=" << static_cast<uint64_t>(t.updated) << "\n";
@@ -1011,6 +1197,10 @@ public:
 		, command_assign(this, *this)
 		, command_note(this, *this)
 		, command_view(this, *this)
+		, command_next(this, *this)
+		, command_priority(this, *this)
+		, command_wait(this, *this)
+		, command_unwait(this, *this)
 		, command_notify(this, *this)
 	{
 		if (!IRCD)
@@ -1128,6 +1318,10 @@ public:
 	friend class CommandHelpServAssign;
 	friend class CommandHelpServNote;
 	friend class CommandHelpServView;
+	friend class CommandHelpServNext;
+	friend class CommandHelpServPriority;
+	friend class CommandHelpServWait;
+	friend class CommandHelpServUnwait;
 	friend class CommandHelpServNotify;
 };
 
@@ -1414,35 +1608,41 @@ void CommandHelpServList::Execute(CommandSource& source, const std::vector<Anope
 		return;
 	}
 
-	this->hs.Reply(source, "Open tickets:");
-	for (const auto& [id, t] : this->hs.tickets_by_id)
+	const bool include_waiting = true;
+	auto tickets = this->hs.GetSortedTickets(filter, include_waiting);
+	if (tickets.empty())
 	{
-		if (!filter.empty())
-		{
-			const auto match = HelpServCore::ContainsCaseInsensitive;
-			if (!match(t.nick, filter) && !match(t.account, filter) && !match(t.topic, filter)
-				&& !match(t.message, filter) && !match(t.requester, filter) && !match(t.assigned, filter))
-				continue;
-		}
+		this->hs.Reply(source, "No matching tickets.");
+		return;
+	}
 
-		const auto age = t.created ? (Anope::CurTime - t.created) : 0;
-		const auto upd = t.updated ? (Anope::CurTime - t.updated) : age;
-		Anope::string line = Anope::Format("\002#%llu\002 Topic: \002%s\002 Nick: \002%s\002 Account: \002%s\002 (%s old, updated %s ago)",
-			static_cast<unsigned long long>(id),
-			t.topic.c_str(),
-			t.nick.c_str(),
-			t.account.c_str(),
+	this->hs.Reply(source, "Open tickets (sorted by state/priority/age):");
+	for (const auto* t : tickets)
+	{
+		const auto age = t->created ? (Anope::CurTime - t->created) : 0;
+		const auto upd = t->updated ? (Anope::CurTime - t->updated) : age;
+		const auto state = HelpServCore::NormalizeState(t->state);
+		const auto pri = HelpServCore::PriorityString(t->priority);
+		Anope::string line = Anope::Format("\002#%llu\002 [\002%s\002/%s] Topic: \002%s\002 Nick: \002%s\002 Account: \002%s\002 (%s old, updated %s ago)",
+			static_cast<unsigned long long>(t->id),
+			pri.c_str(),
+			state.c_str(),
+			t->topic.c_str(),
+			t->nick.c_str(),
+			t->account.c_str(),
 			Anope::Duration(age, source.GetAccount()).c_str(),
 			Anope::Duration(upd, source.GetAccount()).c_str());
 		this->hs.Reply(source, line);
-		if (!t.assigned.empty())
-			this->hs.ReplyF(source, "  Assigned: \002%s\002", t.assigned.c_str());
-		if (!t.message.empty())
-			this->hs.ReplyF(source, "  Message: %s", t.message.c_str());
-		if (!t.notes.empty())
+		if (!t->assigned.empty())
+			this->hs.ReplyF(source, "  Assigned: \002%s\002", t->assigned.c_str());
+		if (!t->wait_reason.empty() && state.equals_ci("waiting"))
+			this->hs.ReplyF(source, "  Waiting: %s", t->wait_reason.c_str());
+		if (!t->message.empty())
+			this->hs.ReplyF(source, "  Message: %s", t->message.c_str());
+		if (!t->notes.empty())
 		{
 			size_t note_count = 0;
-			for (const auto& n : t.notes)
+			for (const auto& n : t->notes)
 				if (!n.empty())
 					++note_count;
 			if (note_count)
@@ -1524,7 +1724,7 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 			{
 				if (!u)
 					continue;
-				u->SendMessage(*this->hs.HelpServ, Anope::Format("Your help ticket \002#%llu\002 was closed: %s",
+				this->hs.SendToUser(u, Anope::Format("Your help ticket \002#%llu\002 was closed: %s",
 					static_cast<unsigned long long>(id), reason.c_str()));
 				notified = true;
 			}
@@ -1533,7 +1733,7 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 	if (!notified)
 	{
 		if (User* u = User::Find(nick, true))
-			u->SendMessage(*this->hs.HelpServ, Anope::Format("Your help ticket \002#%llu\002 was closed: %s",
+			this->hs.SendToUser(u, Anope::Format("Your help ticket \002#%llu\002 was closed: %s",
 				static_cast<unsigned long long>(id), reason.c_str()));
 	}
 
@@ -1746,12 +1946,17 @@ void CommandHelpServView::Execute(CommandSource& source, const std::vector<Anope
 	}
 
 	this->hs.ReplyF(source, "Ticket \002#%llu\002", static_cast<unsigned long long>(id));
+	this->hs.ReplyF(source, "State: \002%s\002  Priority: \002%s\002",
+		HelpServCore::NormalizeState(t->state).c_str(),
+		HelpServCore::PriorityString(t->priority).c_str());
 	this->hs.ReplyF(source, "Topic: \002%s\002", t->topic.c_str());
 	this->hs.ReplyF(source, "Nick: \002%s\002  Account: \002%s\002", t->nick.c_str(), t->account.c_str());
 	if (!t->requester.empty())
 		this->hs.ReplyF(source, "Requester: %s", t->requester.c_str());
 	if (!t->assigned.empty())
 		this->hs.ReplyF(source, "Assigned: \002%s\002", t->assigned.c_str());
+	if (!t->wait_reason.empty() && HelpServCore::NormalizeState(t->state).equals_ci("waiting"))
+		this->hs.ReplyF(source, "Waiting: %s", t->wait_reason.c_str());
 	if (!t->message.empty())
 		this->hs.ReplyF(source, "Message: %s", t->message.c_str());
 	if (t->created)
@@ -1774,6 +1979,252 @@ bool CommandHelpServView::OnHelp(CommandSource& source, const Anope::string& sub
 	this->SendSyntax(source);
 	this->hs.Reply(source, " ");
 	this->hs.Reply(source, _("Shows details and notes for a ticket."));
+	return true;
+}
+
+CommandHelpServNext::CommandHelpServNext(Module* creator, HelpServCore& parent)
+	: Command(creator, "helpserv/next", 0, 2)
+	, hs(parent)
+{
+	this->SetDesc(_("Show the next ticket in the queue"));
+	this->SetSyntax(_("[ALL] [\037filter\037]"));
+	this->AllowUnregistered(true);
+}
+
+void CommandHelpServNext::Execute(CommandSource& source, const std::vector<Anope::string>& params)
+{
+	if (!this->hs.IsStaff(source))
+	{
+		this->hs.Reply(source, "Access denied.");
+		return;
+	}
+
+	this->hs.PruneExpiredTickets();
+
+	bool include_waiting = false;
+	Anope::string filter;
+	if (!params.empty())
+	{
+		if (params[0].equals_ci("all"))
+			include_waiting = true;
+		else
+			filter = params[0];
+	}
+	if (params.size() >= 2)
+		filter = params[1];
+	filter.trim();
+
+	auto tickets = this->hs.GetSortedTickets(filter, include_waiting);
+	if (tickets.empty())
+	{
+		this->hs.Reply(source, "No matching tickets.");
+		return;
+	}
+
+	const auto* t = tickets.front();
+	this->hs.ReplyF(source, "Next ticket: \002#%llu\002 [\002%s\002/%s] Topic: \002%s\002 (use \002VIEW #%llu\002)",
+		static_cast<unsigned long long>(t->id),
+		HelpServCore::PriorityString(t->priority).c_str(),
+		HelpServCore::NormalizeState(t->state).c_str(),
+		t->topic.c_str(),
+		static_cast<unsigned long long>(t->id));
+}
+
+bool CommandHelpServNext::OnHelp(CommandSource& source, const Anope::string& subcommand)
+{
+	this->SendSyntax(source);
+	this->hs.Reply(source, " ");
+	this->hs.Reply(source, _("Shows the next ticket in the queue (sorted by state, priority, age)."));
+	this->hs.Reply(source, _("Use NEXT ALL to include waiting tickets."));
+	return true;
+}
+
+CommandHelpServPriority::CommandHelpServPriority(Module* creator, HelpServCore& parent)
+	: Command(creator, "helpserv/priority", 0, 2)
+	, hs(parent)
+{
+	this->SetDesc(_("Set ticket priority"));
+	this->SetSyntax(_("\037#id\037 \037low|normal|high\037"));
+	this->AllowUnregistered(true);
+}
+
+void CommandHelpServPriority::Execute(CommandSource& source, const std::vector<Anope::string>& params)
+{
+	if (!this->hs.IsStaff(source))
+	{
+		this->hs.Reply(source, "Access denied.");
+		return;
+	}
+
+	if (params.size() < 2)
+	{
+		this->hs.Reply(source, "Syntax: PRIORITY #id <low|normal|high>");
+		this->hs.Reply(source, "Type /msg HelpServ HELP PRIORITY for more information.");
+		return;
+	}
+
+	this->hs.PruneExpiredTickets();
+
+	uint64_t id = 0;
+	if (!HelpServCore::TryParseTicketId(params[0], id))
+	{
+		this->hs.Reply(source, "Syntax: PRIORITY #id <low|normal|high>");
+		return;
+	}
+
+	auto* t = this->hs.FindTicketById(id);
+	if (!t)
+	{
+		this->hs.ReplyF(source, "No open ticket with id \002#%llu\002.", static_cast<unsigned long long>(id));
+		return;
+	}
+
+	int pri = 1;
+	if (!HelpServCore::ParsePriority(params[1], pri))
+	{
+		this->hs.Reply(source, "Syntax: PRIORITY #id <low|normal|high>");
+		return;
+	}
+
+	t->priority = HelpServCore::ClampPriority(pri);
+	t->updated = Anope::CurTime;
+	this->hs.SaveTicketsToFile();
+	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 priority set to %s by %s",
+		static_cast<unsigned long long>(id),
+		HelpServCore::PriorityString(t->priority).c_str(),
+		source.GetNick().c_str()));
+	this->hs.ReplyF(source, "Ticket \002#%llu\002 priority set to \002%s\002.",
+		static_cast<unsigned long long>(id),
+		HelpServCore::PriorityString(t->priority).c_str());
+}
+
+bool CommandHelpServPriority::OnHelp(CommandSource& source, const Anope::string& subcommand)
+{
+	this->SendSyntax(source);
+	this->hs.Reply(source, " ");
+	this->hs.Reply(source, _("Sets ticket priority which affects queue ordering."));
+	return true;
+}
+
+CommandHelpServWait::CommandHelpServWait(Module* creator, HelpServCore& parent)
+	: Command(creator, "helpserv/wait", 0, 2)
+	, hs(parent)
+{
+	this->SetDesc(_("Mark a ticket as waiting for user"));
+	this->SetSyntax(_("\037#id\037 [\037reason\037]"));
+	this->AllowUnregistered(true);
+}
+
+void CommandHelpServWait::Execute(CommandSource& source, const std::vector<Anope::string>& params)
+{
+	if (!this->hs.IsStaff(source))
+	{
+		this->hs.Reply(source, "Access denied.");
+		return;
+	}
+
+	if (params.empty())
+	{
+		this->hs.Reply(source, "Syntax: WAIT #id [reason]");
+		this->hs.Reply(source, "Type /msg HelpServ HELP WAIT for more information.");
+		return;
+	}
+
+	this->hs.PruneExpiredTickets();
+
+	uint64_t id = 0;
+	if (!HelpServCore::TryParseTicketId(params[0], id))
+	{
+		this->hs.Reply(source, "Syntax: WAIT #id [reason]");
+		return;
+	}
+
+	auto* t = this->hs.FindTicketById(id);
+	if (!t)
+	{
+		this->hs.ReplyF(source, "No open ticket with id \002#%llu\002.", static_cast<unsigned long long>(id));
+		return;
+	}
+
+	Anope::string reason = params.size() > 1 ? params[1] : "";
+	reason.trim();
+	t->state = "waiting";
+	t->wait_reason = reason;
+	t->updated = Anope::CurTime;
+	if (!reason.empty())
+	{
+		const auto ts = Anope::strftime(Anope::CurTime, source.GetAccount());
+		Anope::string note = Anope::Format("[%s] %s: waiting (%s)", ts.c_str(), source.GetNick().c_str(), reason.c_str());
+		t->notes.push_back(note);
+	}
+	this->hs.SaveTicketsToFile();
+	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 marked waiting by %s",
+		static_cast<unsigned long long>(id), source.GetNick().c_str()));
+	this->hs.ReplyF(source, "Ticket \002#%llu\002 marked as \002waiting\002.", static_cast<unsigned long long>(id));
+}
+
+bool CommandHelpServWait::OnHelp(CommandSource& source, const Anope::string& subcommand)
+{
+	this->SendSyntax(source);
+	this->hs.Reply(source, " ");
+	this->hs.Reply(source, _("Marks a ticket as waiting (moves it down the queue until un-waited)."));
+	return true;
+}
+
+CommandHelpServUnwait::CommandHelpServUnwait(Module* creator, HelpServCore& parent)
+	: Command(creator, "helpserv/unwait", 0, 1)
+	, hs(parent)
+{
+	this->SetDesc(_("Mark a ticket as open (not waiting)"));
+	this->SetSyntax(_("\037#id\037"));
+	this->AllowUnregistered(true);
+}
+
+void CommandHelpServUnwait::Execute(CommandSource& source, const std::vector<Anope::string>& params)
+{
+	if (!this->hs.IsStaff(source))
+	{
+		this->hs.Reply(source, "Access denied.");
+		return;
+	}
+
+	if (params.empty())
+	{
+		this->hs.Reply(source, "Syntax: UNWAIT #id");
+		this->hs.Reply(source, "Type /msg HelpServ HELP UNWAIT for more information.");
+		return;
+	}
+
+	this->hs.PruneExpiredTickets();
+
+	uint64_t id = 0;
+	if (!HelpServCore::TryParseTicketId(params[0], id))
+	{
+		this->hs.Reply(source, "Syntax: UNWAIT #id");
+		return;
+	}
+
+	auto* t = this->hs.FindTicketById(id);
+	if (!t)
+	{
+		this->hs.ReplyF(source, "No open ticket with id \002#%llu\002.", static_cast<unsigned long long>(id));
+		return;
+	}
+
+	t->state = "open";
+	t->wait_reason.clear();
+	t->updated = Anope::CurTime;
+	this->hs.SaveTicketsToFile();
+	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 un-waited by %s",
+		static_cast<unsigned long long>(id), source.GetNick().c_str()));
+	this->hs.ReplyF(source, "Ticket \002#%llu\002 marked as \002open\002.", static_cast<unsigned long long>(id));
+}
+
+bool CommandHelpServUnwait::OnHelp(CommandSource& source, const Anope::string& subcommand)
+{
+	this->SendSyntax(source);
+	this->hs.Reply(source, " ");
+	this->hs.Reply(source, _("Marks a waiting ticket as open again (returns it to the main queue)."));
 	return true;
 }
 
