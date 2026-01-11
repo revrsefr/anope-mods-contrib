@@ -43,3 +43,4 @@
 
 ### Services
 - [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — tickets/paging + configurable replies + cooldown pruning
+- [infoserv](https://github.com/revrsefr/anope-mods-contrib/wiki/infoserv) — connect/oper informational messages + admin posts
