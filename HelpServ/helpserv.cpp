@@ -1894,6 +1894,30 @@ void CommandHelpServTake::Execute(CommandSource& source, const std::vector<Anope
 	t->updated = Anope::CurTime;
 	this->hs.SaveTicketsToFile();
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 claimed by \002%s\002", static_cast<unsigned long long>(id), source.GetNick().c_str()));
+
+	// Notify any online users identified to the account.
+	bool notified = false;
+	if (!t->account.empty())
+	{
+		if (NickCore* nc = NickCore::Find(t->account))
+		{
+			for (auto* u : nc->users)
+			{
+				if (!u)
+					continue;
+				this->hs.SendToUser(u, Anope::Format("Your help ticket \002#%llu\002 has been claimed by \002%s\002.",
+					static_cast<unsigned long long>(id), source.GetNick().c_str()));
+				notified = true;
+			}
+		}
+	}
+	if (!notified)
+	{
+		if (User* u = User::Find(t->nick, true))
+			this->hs.SendToUser(u, Anope::Format("Your help ticket \002#%llu\002 has been claimed by \002%s\002.",
+				static_cast<unsigned long long>(id), source.GetNick().c_str()));
+	}
+
 	this->hs.ReplyF(source, "Claimed ticket \002#%llu\002.", static_cast<unsigned long long>(id));
 }
 
