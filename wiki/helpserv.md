@@ -127,6 +127,9 @@ Queue workflow:
 Admin:
 - `NOTIFY [notice|privmsg]` (controls how HelpServ replies; requires `notify_priv`)
 
+Stats:
+- `STATS` also includes ticket queue stats (open vs waiting, priority breakdown, assignment counts, oldest tickets).
+
 ## Notes
 
 - `reply_method = "privmsg"` forces HelpServ command output to be sent via `PRIVMSG` (instead of being influenced by user-side preferences).

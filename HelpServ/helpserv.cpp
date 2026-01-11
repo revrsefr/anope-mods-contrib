@@ -629,6 +629,110 @@ class HelpServCore final : public Module
 				this->ReplyF(source, "Top topics: %s", buf.c_str());
 		}
 
+		this->PruneExpiredTickets();
+		const auto now = Anope::CurTime;
+		if (!this->tickets_by_id.empty())
+		{
+			size_t open = 0;
+			size_t waiting = 0;
+			size_t assigned = 0;
+			size_t pri_low = 0;
+			size_t pri_normal = 0;
+			size_t pri_high = 0;
+
+			uint64_t oldest_open_id = 0;
+			time_t oldest_open_created = 0;
+			time_t oldest_open_updated = 0;
+			uint64_t oldest_wait_id = 0;
+			time_t oldest_wait_created = 0;
+			time_t oldest_wait_updated = 0;
+
+			std::map<Anope::string, uint64_t> ticket_topics;
+			auto consider_oldest = [&](bool is_waiting, const Ticket& t) {
+				const auto created = t.created;
+				if (!created)
+					return;
+				uint64_t& oldest_id = is_waiting ? oldest_wait_id : oldest_open_id;
+				time_t& oldest_created = is_waiting ? oldest_wait_created : oldest_open_created;
+				time_t& oldest_updated = is_waiting ? oldest_wait_updated : oldest_open_updated;
+				if (!oldest_created || created < oldest_created)
+				{
+					oldest_id = t.id;
+					oldest_created = created;
+					oldest_updated = t.updated;
+				}
+			};
+
+			for (const auto& [_, t] : this->tickets_by_id)
+			{
+				const auto state = NormalizeState(t.state);
+				const bool is_waiting = state.equals_ci("waiting");
+				if (is_waiting)
+					++waiting;
+				else
+					++open;
+
+				if (!t.assigned.empty())
+					++assigned;
+
+				switch (ClampPriority(t.priority))
+				{
+					case 0: ++pri_low; break;
+					case 2: ++pri_high; break;
+					default: ++pri_normal; break;
+				}
+
+				if (!t.topic.empty())
+					++ticket_topics[t.topic];
+
+				consider_oldest(is_waiting, t);
+			}
+
+			this->ReplyF(source, "Tickets: %zu (open: %zu, waiting: %zu)", this->tickets_by_id.size(), open, waiting);
+			this->ReplyF(source, "Tickets by priority: high: %zu, normal: %zu, low: %zu", pri_high, pri_normal, pri_low);
+			this->ReplyF(source, "Tickets assigned: %zu (unassigned: %zu)", assigned, this->tickets_by_id.size() - assigned);
+
+			auto age = [&](time_t when) {
+				if (!when || now <= when)
+					return Anope::string("0s");
+				return Anope::Duration(now - when, source.GetAccount());
+			};
+			if (oldest_open_id)
+				this->ReplyF(source, "Oldest open ticket: \002#%llu\002 (created %s ago%s)",
+					static_cast<unsigned long long>(oldest_open_id),
+					age(oldest_open_created).c_str(),
+					oldest_open_updated ? Anope::Format(", updated %s ago", age(oldest_open_updated).c_str()).c_str() : "");
+			if (oldest_wait_id)
+				this->ReplyF(source, "Oldest waiting ticket: \002#%llu\002 (created %s ago%s)",
+					static_cast<unsigned long long>(oldest_wait_id),
+					age(oldest_wait_created).c_str(),
+					oldest_wait_updated ? Anope::Format(", updated %s ago", age(oldest_wait_updated).c_str()).c_str() : "");
+
+			if (!ticket_topics.empty())
+			{
+				std::vector<std::pair<Anope::string, uint64_t>> top;
+				top.reserve(ticket_topics.size());
+				for (const auto& kv : ticket_topics)
+					top.push_back(kv);
+				std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) {
+					return a.second > b.second;
+				});
+
+				Anope::string buf;
+				size_t shown = 0;
+				for (const auto& [name, count] : top)
+				{
+					if (shown++ >= 5)
+						break;
+					if (!buf.empty())
+						buf += ", ";
+					buf += Anope::Format("%s(%llu)", name.c_str(), static_cast<unsigned long long>(count));
+				}
+				if (!buf.empty())
+					this->ReplyF(source, "Ticket topics: %s", buf.c_str());
+			}
+		}
+
 		if (this->last_reload)
 			this->ReplyF(source, "Last reload: %s", Anope::strftime(this->last_reload, source.GetAccount()).c_str());
 	}
