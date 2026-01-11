@@ -1621,7 +1621,11 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 	this->hs.open_ticket_by_account[NormalizeTopic(t.account)] = t.id;
 	this->hs.SaveTicketsToFile();
 
-	this->hs.ReplyF(source, "Your ticket has been opened (\002#%llu\002) about \002%s\002.", static_cast<unsigned long long>(t.id), topic.c_str());
+	Anope::string oper = source.GetNick();
+	if (source.GetUser())
+		oper = source.GetUser()->GetDisplayedMask();
+	this->hs.ReplyF(source, "Your ticket has been opened (#%llu) about %s by Operator: %s",
+		static_cast<unsigned long long>(t.id), topic.c_str(), oper.c_str());
 
 	Anope::string who = source.GetNick();
 	if (source.GetUser())
