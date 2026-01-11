@@ -568,12 +568,25 @@ class HelpServCore final : public Module
 			if (id >= this->next_ticket_id)
 				this->next_ticket_id = id + 1;
 		}
+
+		// If all tickets were closed, reset the counter so the flatfile doesn't
+		// keep drifting upwards forever (requested behavior).
+		if (this->tickets_by_id.empty() && this->next_ticket_id != 1)
+		{
+			this->next_ticket_id = 1;
+			if (!Anope::ReadOnly)
+				this->SaveTicketsToFile();
+		}
 	}
 
 	void SaveTicketsToFile()
 	{
 		const auto path = GetTicketsPath();
 		const auto tmp = path + ".tmp";
+
+		// When there are no open tickets, reset next_ticket_id for clean files.
+		if (this->tickets_by_id.empty())
+			this->next_ticket_id = 1;
 
 		std::ofstream out(tmp.c_str(), std::ios::out | std::ios::trunc);
 		if (!out.is_open())
