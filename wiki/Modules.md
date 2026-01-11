@@ -55,3 +55,4 @@ Notes:
 
 - [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — HelpServ pseudo-client (help topics + search + stats + tickets/paging; configurable NOTICE/PRIVMSG replies; cooldown-map pruning; STATS usage counters).
 - [infoserv](https://github.com/revrsefr/anope-mods-contrib/wiki/infoserv) — InfoServ pseudo-client (connect/oper informational messages; admin-managed posts; optional global broadcasts; configurable NOTICE/PRIVMSG replies).
+- [chanfix](https://github.com/revrsefr/anope-mods-contrib/wiki/chanfix) — ChanFix pseudo-client (tracks ops in unregistered channels; manual fix requests; optional autofix; NOFIX/MARK flags; skips registered channels).

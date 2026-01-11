@@ -44,3 +44,4 @@
 ### Services
 - [helpserv](https://github.com/revrsefr/anope-mods-contrib/wiki/helpserv) — tickets/paging + configurable replies + cooldown pruning
 - [infoserv](https://github.com/revrsefr/anope-mods-contrib/wiki/infoserv) — connect/oper informational messages + admin posts
+- [chanfix](https://github.com/revrsefr/anope-mods-contrib/wiki/chanfix) — restore ops in unregistered channels (manual/autofix)
