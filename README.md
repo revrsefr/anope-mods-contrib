@@ -46,29 +46,6 @@ All module documentation (description, configuration, required commands) is in t
 
 This repository also mirrors those pages under `wiki/` for offline browsing.
 
-## Modules
-
-- Wiki index: https://github.com/revrsefr/anope-mods-contrib/wiki/Modules
-- Module pages:
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/cs_topichistory
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/cs_akick_check
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/hs_nethost
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_apiauth
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_expirenotice
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_login
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_memo_chanaccess
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_saslJwt
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_secure
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_sqlauth
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/m_youtube
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/ns_sasl_oauthbearer
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/os_chantrap
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/os_forceid
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/os_notinchan
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/os_regset
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/chanstats_plus
-	- https://github.com/revrsefr/anope-mods-contrib/wiki/rpc_chanstatsplus
-
 ## Contact
 
 IRC: irc.irc4fun.net +6697 (tls)
