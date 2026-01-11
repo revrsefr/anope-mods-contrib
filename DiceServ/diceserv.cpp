@@ -467,7 +467,7 @@ static inline bool is_number(char chr)
 static inline bool is_number_str(const Anope::string &str)
 {
 	Anope::string::const_iterator begin = str.begin(), end = str.end();
-	return std::find_if(begin, end, std::not1(std::ptr_fun(is_number))) == end && std::count(begin, end, '.') < 2;
+	return std::all_of(begin, end, [](char chr) { return is_number(chr); }) && std::count(begin, end, '.') < 2;
 }
 
 /** Determine if the given character is a multiplication or division operator.
@@ -660,7 +660,7 @@ struct Infix
 	Infix(const Anope::string &newStr, unsigned newPositions[], unsigned num)
 	{
 		this->str = newStr;
-		this->positions = std::vector<unsigned>(newPositions, newPositions + sizeof(unsigned) * num);
+		this->positions = std::vector<unsigned>(newPositions, newPositions + num);
 	}
 };
 
@@ -821,7 +821,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = infix.positions[x + func >= len ? len : x + func];
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No open parenthesis found after function.";
+				data.errStr = _("That looks like a function, but it's missing an opening '(' after the name.");
 				return false;
 			}
 			x += func - 1;
@@ -842,7 +842,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number or close parenthesis before comma.";
+				data.errStr = _("A comma must come after a number or ')'.");
 				return false;
 			}
 			if (x == len - 1 ? 1 : !is_number(infix.str[x + 1]) && infix.str[x + 1] != '(' && infix.str[x + 1] != '_' && !is_constant(infix.str, x + 1) &&
@@ -850,7 +850,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number or open parenthesis after comma.";
+				data.errStr = _("A comma must be followed by a number or '('.");
 				return false;
 			}
 		}
@@ -860,7 +860,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number or close parenthesis before operator.";
+				data.errStr = _("An operator must come after a number or ')'.");
 				return false;
 			}
 			if (x == len - 1 ? 1 : !is_number(infix.str[x + 1]) && infix.str[x + 1] != '(' && infix.str[x + 1] != '_' && !is_constant(infix.str, x + 1) &&
@@ -868,7 +868,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number or open parenthesis after operator.";
+				data.errStr = _("An operator must be followed by a number or '('.");
 				return false;
 			}
 		}
@@ -878,7 +878,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No operator or open parenthesis found before current open\nparenthesis.";
+				data.errStr = _("It looks like there's a missing operator before '('.");
 				return false;
 			}
 			if (x != len - 1 && !is_number(infix.str[x + 1]) && infix.str[x + 1] != '(' && infix.str[x + 1] != '_' && !is_constant(infix.str, x + 1) &&
@@ -886,7 +886,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number after current open parenthesis.";
+				data.errStr = _("Expected a number (or another '(') right after '('.");
 				return false;
 			}
 		}
@@ -896,14 +896,14 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No number found before current close parenthesis.";
+				data.errStr = _("Expected a number (or ')') right before ')'.");
 				return false;
 			}
 			if (x != len - 1 && !is_op_noparen(infix.str[x + 1]) && infix.str[x + 1] != ')' && infix.str[x + 1] != ',')
 			{
 				data.errPos = position;
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No operator or close parenthesis found after current close\nparenthesis.";
+				data.errStr = _("Expected an operator, ',' or ')' after ')'.");
 				return false;
 			}
 		}
@@ -911,7 +911,7 @@ static bool CheckInfix(DiceServData &data, const Infix &infix)
 		{
 			data.errPos = position;
 			data.errCode = DICE_ERROR_PARSE;
-			data.errStr = "An invalid character was encountered.";
+			data.errStr = _("That expression contains an invalid character.");
 			return false;
 		}
 		prev_was_func = prev_was_const = false;
@@ -1394,7 +1394,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = infix.positions[x];
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "No numbers were found before the operator was encountered.";
+				data.errStr = _("That operator needs a number before it.");
 				postfix.clear();
 				return postfix;
 			}
@@ -1417,7 +1417,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 				{
 					data.errPos = infix.positions[x];
 					data.errCode = DICE_ERROR_PARSE;
-					data.errStr = "A close parenthesis was found but not enough open\nparentheses were found before it.";
+					data.errStr = _("There's a ')' here, but there wasn't a matching '(' earlier.");
 					postfix.clear();
 					return postfix;
 				}
@@ -1465,7 +1465,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 			{
 				data.errPos = infix.positions[x];
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "A comma was encountered outside of a function.";
+				data.errStr = _("That comma doesn't look like it's inside a function call.");
 				postfix.clear();
 				return postfix;
 			}
@@ -1477,7 +1477,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 				{
 					data.errPos = infix.positions[x];
 					data.errCode = DICE_ERROR_PARSE;
-					data.errStr = "A comma was encountered outside of a function.";
+					data.errStr = _("That comma doesn't look like it's inside a function call.");
 					postfix.clear();
 					return postfix;
 				}
@@ -1492,7 +1492,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 		{
 			data.errPos = infix.positions[x];
 			data.errCode = DICE_ERROR_PARSE;
-			data.errStr = "An invalid character was encountered.";
+			data.errStr = _("That expression contains an invalid character.");
 			postfix.clear();
 			return postfix;
 		}
@@ -1524,7 +1524,7 @@ static Postfix InfixToPostfix(DiceServData &data, const Infix &infix)
 		{
 			data.errPos = len < infix.positions.size() ? infix.positions[len] : infix.positions[infix.positions.size() - 1] + 1;
 			data.errCode = DICE_ERROR_PARSE;
-			data.errStr = "There are more open parentheses than close parentheses.";
+			data.errStr = _("There's at least one '(' without a matching ')'.");
 			postfix.clear();
 			return postfix;
 		}
@@ -1552,7 +1552,7 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 			if (token.empty())
 			{
 				data.errCode = DICE_ERROR_STACK;
-				data.errStr = "An empty token was found.";
+				data.errStr = _("Something went wrong while evaluating that roll (empty token).");
 				return 0;
 			}
 			if (is_function(token))
@@ -1566,8 +1566,8 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 					if (real_function_arguments < -function_arguments)
 					{
 						data.errCode = DICE_ERROR_STACK;
-									data.errStr = "Function requires at least " + ds_stringify(-function_arguments) + " arguments, but only " +
-										ds_stringify(real_function_arguments) + " were passed.";
+						data.errStr = "Function needs at least " + ds_stringify(-function_arguments) + " arguments, but got " +
+							ds_stringify(real_function_arguments) + ".";
 						return 0;
 					}
 					function_arguments = real_function_arguments;
@@ -1575,7 +1575,7 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 				if (num_stack.empty() || num_stack.size() < static_cast<unsigned>(function_arguments))
 				{
 					data.errCode = DICE_ERROR_STACK;
-					data.errStr = "Not enough numbers for function.";
+					data.errStr = _("That function doesn't have enough numbers to work with.");
 					return 0;
 				}
 				double val1 = num_stack.top();
@@ -1870,7 +1870,7 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 				if (num_stack.empty() || num_stack.size() < 2)
 				{
 					data.errCode = DICE_ERROR_STACK;
-					data.errStr = "Not enough numbers for operator.";
+					data.errStr = _("That operator doesn't have enough numbers to work with.");
 					return 0;
 				}
 				double val2 = num_stack.top();
@@ -1962,7 +1962,7 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 			if (!val_ptr)
 			{
 				data.errCode = DICE_ERROR_STACK;
-				data.errStr = "An empty number was found.";
+				data.errStr = _("Something went wrong while evaluating that roll (missing number).");
 				return 0;
 			}
 			num_stack.push(*val_ptr);
@@ -1973,7 +1973,7 @@ static double EvaluatePostfix(DiceServData &data, const Postfix &postfix)
 	if (!num_stack.empty())
 	{
 		data.errCode = DICE_ERROR_STACK;
-		data.errStr = "Too many numbers were found as input.";
+		data.errStr = _("That expression has too many numbers and can't be evaluated as written.");
 		return 0;
 	}
 	return val;
@@ -2359,7 +2359,7 @@ Anope::string DiceServData::GenerateLongExOutput() const
 	{
 		if (!first)
 			output << " ";
-			output << ds_stringify(this->results[i]);
+		output << ds_stringify(this->results[i]);
 		first = false;
 	}
 
@@ -2422,7 +2422,7 @@ Anope::string DiceServData::GenerateShortExOutput() const
 	{
 		if (!first)
 			output << " ";
-			output << ds_stringify(this->results[i]);
+		output << ds_stringify(this->results[i]);
 		first = false;
 	}
 
@@ -2443,7 +2443,7 @@ Anope::string DiceServData::GenerateNoExOutput() const
 	{
 		if (!first)
 			output << " ";
-			output << ds_stringify(this->results[i]);
+		output << ds_stringify(this->results[i]);
 		first = false;
 	}
 
@@ -2849,21 +2849,28 @@ public:
 				break;
 			case DICE_ERROR_PARSE:
 			{
-				source.Reply(_("During parsing, an error was found in the following\nexpression:"));
-				source.Reply(" %s", data.diceStr.c_str());
-				Anope::string spaces(data.errPos > data.diceStr.length() ? data.diceStr.length() : data.errPos, ' ');
-				source.Reply("(%s^)", spaces.c_str());
-				source.Reply(_("Error description is as follows:"));
-				source.Reply("%s", data.errStr.c_str());
+				source.Reply(_("Sorry — I couldn't understand that roll request."));
+				source.Reply(_("Expression: %s"), data.diceStr.c_str());
+				if (!data.chanStr.empty())
+					source.Reply(_("Target: %s"), data.chanStr.c_str());
+				if (!data.commentStr.empty())
+					source.Reply(_("Comment: %s"), data.commentStr.c_str());
+				unsigned caret_pos = data.errPos > data.diceStr.length() ? data.diceStr.length() : data.errPos;
+				Anope::string spaces(caret_pos, ' ');
+				source.Reply(_("Error near character %u."), caret_pos + 1);
+				source.Reply(_("Marker: %s^"), spaces.c_str());
+				if (!data.errStr.empty())
+					source.Reply(_("Details: %s"), data.errStr.c_str());
+				source.Reply(_("Tip: try something like \0372d6+1\037 or \0371d20+5\037. For help: \002/msg %s HELP ROLL\002"), source.service->nick.c_str());
 				break;
 			}
 			case DICE_ERROR_DIV0:
-				source.Reply(_("Division by 0 in following expression:"));
-				source.Reply(" %s", data.diceStr.c_str());
+				source.Reply(_("That roll tried to divide by zero, so I couldn't evaluate it."));
+				source.Reply(_("Expression: %s"), data.diceStr.c_str());
 				break;
 			case DICE_ERROR_UNDEFINED:
-				source.Reply(_("Undefined result in following expression:"));
-				source.Reply(" %s", data.diceStr.c_str());
+				source.Reply(_("That roll resulted in an undefined value, so I couldn't evaluate it."));
+				source.Reply(_("Expression: %s"), data.diceStr.c_str());
 				break;
 			case DICE_ERROR_UNACCEPTABLE_DICE:
 				if (data.errNum <= 0)
@@ -2890,14 +2897,15 @@ public:
 						data.errNum, DICE_MAX_TIMES);
 				break;
 			case DICE_ERROR_OVERUNDERFLOW:
-				source.Reply(_("Dice results in following expression resulted in either\noverflow or underflow:"));
-				source.Reply(" %s", data.diceStr.c_str());
+				source.Reply(_("That roll result was too large or too small to handle safely."));
+				source.Reply(_("Expression: %s"), data.diceStr.c_str());
 				break;
 			case DICE_ERROR_STACK:
-				source.Reply(_("The following roll expression could not be properly\nevaluated, please try again or let an administrator know."));
-				source.Reply(" %s", data.diceStr.c_str());
-				source.Reply(_("Error description is as follows:"));
-				source.Reply("%s", data.errStr.c_str());
+				source.Reply(_("Sorry — I couldn't evaluate that roll."));
+				source.Reply(_("Expression: %s"), data.diceStr.c_str());
+				if (!data.errStr.empty())
+					source.Reply(_("Details: %s"), data.errStr.c_str());
+				source.Reply(_("Tip: try a simpler expression, or ask an admin if this keeps happening."));
 				break;
 		}
 	}
@@ -2914,7 +2922,7 @@ public:
 			if (data.dicePart.empty())
 			{
 				data.errCode = DICE_ERROR_PARSE;
-				data.errStr = "An empty dice expression was found.";
+				data.errStr = _("I didn't see any dice to roll there.");
 				data.errPos = data.timesPart.length() + 1;
 				return;
 			}

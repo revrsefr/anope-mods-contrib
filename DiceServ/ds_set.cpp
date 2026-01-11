@@ -192,7 +192,7 @@ public:
 			BotInfo *bot = BotInfo::Find(where);
 			// If the nick wasn't found and a NickServ entry wasn't found (or the nick is suspended), display an error
 			if (bot || (!nu && (!na || (na->nc && na->nc->HasExt("SUSPENDED")))))
-				source.Reply(_("Nick %s is not a valid nick."), where.c_str());
+				source.Reply(_("I couldn't find a user or registered nick named \037%s\037."), where.c_str());
 			// If we found a registered nick, we will store the ignore there
 			else if (na)
 			{
