@@ -9,7 +9,7 @@ Features:
 - Staff escalation:
   - `HELPME <topic> [message]` pages staff immediately
   - Ticket queue: `REQUEST <topic> [message]` + `CANCEL`
-  - Staff tools: `LIST` + `CLOSE <nick|account> [reason]`
+  - Staff tools: `LIST [filter]` + `VIEW #id` + `TAKE #id` + `ASSIGN #id <nick|none>` + `NOTE #id <text>` + `CLOSE <#id|nick|account> [reason]`
 
 ## Install
 
@@ -49,6 +49,15 @@ module
   # - empty        : disable paging
   staff_target = "#services"
 
+  # How HelpServ replies to users:
+  # - notice (default)
+  # - privmsg
+  reply_method = "notice"
+
+  # Expire old tickets (default 0 = disabled). Supports suffixes: s/m/h/d/w.
+  # Example: 7d
+  ticket_expire = 0
+
   # Cooldowns (seconds)
   helpme_cooldown = 120
   request_cooldown = 60
@@ -58,6 +67,9 @@ module
 
   # Privilege required for staff commands LIST/CLOSE
   ticket_priv = "helpserv/ticket"
+
+  # Privilege required to change reply_method at runtime using NOTIFY
+  notify_priv = "helpserv/admin"
 
   # Help topics
   topic
@@ -78,7 +90,14 @@ command { service = "HelpServ"; name = "CANCEL"; command = "helpserv/cancel"; }
 
 # Staff commands (hidden by default)
 command { service = "HelpServ"; name = "LIST"; command = "helpserv/list"; hide = true; }
+command { service = "HelpServ"; name = "VIEW"; command = "helpserv/view"; hide = true; }
+command { service = "HelpServ"; name = "TAKE"; command = "helpserv/take"; hide = true; }
+command { service = "HelpServ"; name = "ASSIGN"; command = "helpserv/assign"; hide = true; }
+command { service = "HelpServ"; name = "NOTE"; command = "helpserv/note"; hide = true; }
 command { service = "HelpServ"; name = "CLOSE"; command = "helpserv/close"; hide = true; }
+
+# Admin command (hidden by default)
+command { service = "HelpServ"; name = "NOTIFY"; command = "helpserv/notify"; hide = true; }
 ```
 
 ## Usage
@@ -91,8 +110,19 @@ Users:
 - `CANCEL` (cancels your open ticket)
 
 Staff:
-- `LIST` (lists open tickets)
-- `CLOSE <nick|account> [reason]` (closes a ticket)
+- `LIST [filter]` (lists open tickets)
+- `VIEW #id` (shows a ticket including notes)
+- `TAKE #id` (claim a ticket)
+- `ASSIGN #id <nick|none>` (assign/unassign)
+- `NOTE #id <text>` (add internal notes)
+- `CLOSE <#id|nick|account> [reason]` (closes a ticket)
+
+Admin:
+- `NOTIFY [notice|privmsg]` (controls how HelpServ replies; requires `notify_priv`)
+
+## Notes
+
+- `reply_method = "privmsg"` forces HelpServ command output to be sent via `PRIVMSG` (instead of being influenced by user-side preferences).
 
 ## Persistence (flatfile DB)
 
