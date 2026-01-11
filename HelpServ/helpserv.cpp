@@ -1624,8 +1624,9 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 	Anope::string oper = source.GetNick();
 	if (source.GetUser())
 		oper = source.GetUser()->GetDisplayedMask();
-	this->hs.ReplyF(source, "Your ticket has been opened (#%llu) about %s by Operator: %s",
-		static_cast<unsigned long long>(t.id), topic.c_str(), oper.c_str());
+	this->hs.ReplyF(source, "Your ticket has been opened (#%llu) about %s.",
+		static_cast<unsigned long long>(t.id), topic.c_str());
+	this->hs.ReplyF(source, "Opened by: %s", oper.c_str());
 
 	Anope::string who = source.GetNick();
 	if (source.GetUser())
