@@ -59,6 +59,37 @@ GroupServCore::~GroupServCore()
 		this->SaveDB();
 }
 
+bool GroupServCore::DoesGroupExist(const Anope::string& groupname) const
+{
+	const auto key = NormalizeKey(groupname);
+	return this->groups.find(key) != this->groups.end();
+}
+
+bool GroupServCore::IsMemberOfGroup(const Anope::string& groupname, const NickCore* nc) const
+{
+	if (!nc)
+		return false;
+
+	const auto key = NormalizeKey(groupname);
+	auto it = this->groups.find(key);
+	if (it == this->groups.end())
+		return false;
+
+	const auto flags = this->GetAccessFor(it->second, nc);
+	if (flags == GSAccessFlags::NONE)
+		return false;
+
+	if (HasFlag(flags, GSAccessFlags::BAN))
+		return false;
+
+	return true;
+}
+
+void GroupServCore::SetChanAccessItem(ExtensibleItem<GSChanAccessData>* item)
+{
+	this->chanaccess_item = item;
+}
+
 Anope::string GroupServCore::GetDBPath() const
 {
 	return Anope::ExpandData("groupserv.db");
@@ -148,6 +179,9 @@ bool GroupServCore::IsValidGroupName(const Anope::string& name)
 
 NickCore* GroupServCore::FindAccount(const Anope::string& account) const
 {
+	NickAlias* na = NickAlias::Find(account);
+	if (na && na->nc)
+		return na->nc;
 	return NickCore::Find(account);
 }
 
@@ -215,19 +249,21 @@ bool GroupServCore::HasAccess(const GSGroupRecord& g, const NickCore* nc, GSAcce
 Anope::string GroupServCore::FlagsToString(GSAccessFlags flags) const
 {
 	Anope::string out;
-	auto add = [&](const char* s)
+	auto add = [&](char c)
 	{
-		if (!out.empty())
-			out += " ";
-		out += s;
+		out += c;
 	};
 
-	if (HasFlag(flags, GSAccessFlags::FOUNDER)) add("F");
-	if (HasFlag(flags, GSAccessFlags::INVITE)) add("I");
-	if (HasFlag(flags, GSAccessFlags::SET)) add("S");
-	if (HasFlag(flags, GSAccessFlags::FLAGS)) add("M");
-	if (HasFlag(flags, GSAccessFlags::ACLVIEW)) add("V");
-	if (HasFlag(flags, GSAccessFlags::BAN)) add("B");
+	// Atheme-style letters (see ParseFlags).
+	if (HasFlag(flags, GSAccessFlags::FOUNDER)) add('F');
+	if (HasFlag(flags, GSAccessFlags::FLAGS)) add('f');
+	if (HasFlag(flags, GSAccessFlags::ACLVIEW)) add('A');
+	if (HasFlag(flags, GSAccessFlags::MEMO)) add('m');
+	if (HasFlag(flags, GSAccessFlags::CHANACCESS)) add('c');
+	if (HasFlag(flags, GSAccessFlags::VHOST)) add('v');
+	if (HasFlag(flags, GSAccessFlags::SET)) add('s');
+	if (HasFlag(flags, GSAccessFlags::INVITE)) add('i');
+	if (HasFlag(flags, GSAccessFlags::BAN)) add('b');
 	if (out.empty())
 		out = "-";
 	return out;
@@ -257,16 +293,22 @@ GSAccessFlags GroupServCore::ParseFlags(const Anope::string& flagstring, bool al
 	GSAccessFlags flags = current;
 	std::vector<Anope::string> tokens;
 	sepstream(flagstring, ' ').GetTokens(tokens);
+	if (tokens.empty() && !flagstring.empty())
+		tokens.push_back(flagstring);
 
 	auto apply_one = [&](const Anope::string& up, char dir) {
 		GSAccessFlags bit = GSAccessFlags::NONE;
-		if (up == "A" || up == "ALL") bit = GSAccessFlags::ALL;
+		// Atheme letters (case-insensitive), plus some older aliases for compatibility.
+		if (up == "*" || up == "ALL") bit = GSAccessFlags::ALL;
 		else if (up == "F" || up == "FOUNDER") bit = GSAccessFlags::FOUNDER;
-		else if (up == "I" || up == "INVITE") bit = GSAccessFlags::INVITE;
-		else if (up == "S" || up == "SET") bit = GSAccessFlags::SET;
-		else if (up == "M" || up == "FLAGS" || up == "MANAGE") bit = GSAccessFlags::FLAGS;
-		else if (up == "V" || up == "ACLVIEW" || up == "VIEW") bit = GSAccessFlags::ACLVIEW;
-		else if (up == "B" || up == "BAN") bit = GSAccessFlags::BAN;
+		else if (up == "f" || up == "FLAGS" || up == "MANAGE" || up == "M") bit = GSAccessFlags::FLAGS;
+		else if (up == "A" || up == "ACLVIEW" || up == "VIEW" || up == "V") bit = GSAccessFlags::ACLVIEW;
+		else if (up == "m" || up == "MEMO") bit = GSAccessFlags::MEMO;
+		else if (up == "c" || up == "CHAN" || up == "CHANACCESS") bit = GSAccessFlags::CHANACCESS;
+		else if (up == "v" || up == "VHOST") bit = GSAccessFlags::VHOST;
+		else if (up == "s" || up == "SET") bit = GSAccessFlags::SET;
+		else if (up == "i" || up == "INVITE" || up == "I") bit = GSAccessFlags::INVITE;
+		else if (up == "b" || up == "BAN" || up == "B") bit = GSAccessFlags::BAN;
 		else
 			return false;
 
@@ -292,15 +334,28 @@ GSAccessFlags GroupServCore::ParseFlags(const Anope::string& flagstring, bool al
 		if (dir == '-' && !allow_minus)
 			continue;
 
-		Anope::string up = token.upper();
+		// Special:
+		// - "+" means "add all permissions except founder" (Atheme behavior)
+		// - "-" means "remove all permissions including founder"
+		if (token.empty())
+		{
+			if (dir == '-')
+				flags = GSAccessFlags::NONE;
+			else
+				flags |= GSAccessFlags::ALL_NOFOUNDER;
+			continue;
+		}
+
+		Anope::string up = token;
 		if (apply_one(up, dir))
 			continue;
 
 		// Support compact Atheme-style strings like +VI or -MS.
-		if (up.length() > 1)
+		Anope::string up2 = token.upper();
+		if (up2.length() > 1)
 		{
 			bool any = false;
-			for (const auto ch : up)
+			for (const auto ch : up2)
 			{
 				if (!isalpha(static_cast<unsigned char>(ch)))
 					continue;
@@ -315,9 +370,90 @@ GSAccessFlags GroupServCore::ParseFlags(const Anope::string& flagstring, bool al
 
 	// Founder implies management powers.
 	if (HasFlag(flags, GSAccessFlags::FOUNDER))
-		flags |= (GSAccessFlags::FLAGS | GSAccessFlags::SET | GSAccessFlags::INVITE | GSAccessFlags::ACLVIEW);
+		flags |= GSAccessFlags::ALL_NOFOUNDER;
 
 	return flags;
+}
+
+bool GroupServCore::ListChans(CommandSource& source, const Anope::string& groupname)
+{
+	GSGroupRecord* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "The group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	if (!source.GetAccount())
+	{
+		this->Reply(source, "You must be identified to use LISTCHANS.");
+		return false;
+	}
+	if (!this->HasAccess(*g, source.GetAccount(), GSAccessFlags::ACLVIEW) && !this->IsAuspex(source))
+	{
+		this->Reply(source, "Access denied.");
+		return false;
+	}
+
+	// Atheme semantics are "channels the group has access to".
+	// In this module we implement that as explicit channel association via:
+	//   /msg ChanServ SET #channel GROUP <!group>
+	if (!this->chanaccess_item)
+	{
+		this->Reply(source, "LISTCHANS is not available (channel association storage not initialized).");
+		return false;
+	}
+
+	std::vector<Anope::string> chans;
+	for (const auto& [_, ci] : *RegisteredChannelList)
+	{
+		if (!ci)
+			continue;
+
+		auto* d = this->chanaccess_item->Get(ci);
+		if (!d)
+			continue;
+		if (NormalizeKey(d->group) != NormalizeKey(g->name))
+			continue;
+		chans.push_back(ci->name);
+	}
+	std::sort(chans.begin(), chans.end());
+
+	this->ReplyF(source, "Channels associated with %s:", g->name.c_str());
+	if (chans.empty())
+	{
+		this->Reply(source, "(none)");
+		return true;
+	}
+
+	for (const auto& ch : chans)
+		this->ReplyF(source, "- %s", ch.c_str());
+	this->ReplyF(source, "End of list - %u channel(s) shown.", static_cast<unsigned int>(chans.size()));
+	return true;
+}
+
+bool GroupServCore::SetGroupFlag(CommandSource& source, const Anope::string& groupname, GSGroupFlags flag, bool enabled)
+{
+	if (!this->IsAdmin(source))
+	{
+		this->Reply(source, "Access denied.");
+		return false;
+	}
+
+	GSGroupRecord* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "The group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	if (enabled)
+		g->flags |= flag;
+	else
+		g->flags = static_cast<GSGroupFlags>(static_cast<unsigned int>(g->flags) & ~static_cast<unsigned int>(flag));
+
+	this->SaveDB();
+	return true;
 }
 
 void GroupServCore::SetReplyMode(const Anope::string& mode)
@@ -760,10 +896,9 @@ void GroupServCore::OnReload(Configuration::Conf& conf)
 	this->maxgroupacs = mod->Get<unsigned int>("maxgroupacs", "0");
 	this->enable_open_groups = mod->Get<bool>("enable_open_groups", "yes");
 
-	this->default_joinflags_raw = mod->Get<Anope::string>("default_joinflags", "+V");
+	this->default_joinflags_raw = mod->Get<Anope::string>("default_joinflags", "");
 	this->default_joinflags = this->ParseFlags(this->default_joinflags_raw, false, GSAccessFlags::NONE);
-	if (this->default_joinflags == GSAccessFlags::NONE)
-		this->default_joinflags = GSAccessFlags::ACLVIEW;
+	// Atheme default: JOIN grants no privileges unless joinflags are configured.
 
 	this->save_interval = mod->Get<time_t>("save_interval", "600");
 
@@ -989,8 +1124,14 @@ bool GroupServCore::JoinGroup(CommandSource& source, const Anope::string& groupn
 	}
 
 	const auto acct = NormalizeKey(source.GetAccount()->display);
-	if (g->access.find(acct) != g->access.end())
+	auto existing = g->access.find(acct);
+	if (existing != g->access.end())
 	{
+		if (HasFlag(existing->second, GSAccessFlags::BAN))
+		{
+			this->ReplyF(source, "You are banned from group %s.", g->name.c_str());
+			return false;
+		}
 		this->ReplyF(source, "You are already a member of group %s.", g->name.c_str());
 		return false;
 	}
@@ -1276,6 +1417,59 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 		}
 	}
 
+	if (up == "GROUPNAME")
+	{
+		Anope::string newname = value;
+		newname.trim();
+		if (!is_founder)
+		{
+			this->Reply(source, "Access denied.");
+			return false;
+		}
+		if (!IsValidGroupName(newname))
+		{
+			this->Reply(source, "Syntax: SET <!group> GROUPNAME <!newgroup>");
+			return false;
+		}
+		if (this->FindGroup(newname))
+		{
+			this->ReplyF(source, "The group %s already exists.", newname.c_str());
+			return false;
+		}
+
+		const auto oldkey = NormalizeKey(g->name);
+		const auto newkey = NormalizeKey(newname);
+		GSGroupRecord copy = *g;
+		copy.name = newname;
+
+		this->groups.erase(oldkey);
+		this->groups.emplace(newkey, copy);
+
+		for (auto& [acct, inv] : this->invites)
+		{
+			if (inv.group.equals_ci(groupname))
+				inv.group = newname;
+		}
+
+		for (auto it = this->drop_challenges.begin(); it != this->drop_challenges.end();)
+		{
+			auto bar = it->first.find('|');
+			if (bar != Anope::string::npos)
+			{
+				Anope::string gpart = it->first.substr(bar + 1);
+				if (gpart.equals_ci(oldkey) || gpart.equals_ci(newkey))
+				{
+					it = this->drop_challenges.erase(it);
+					continue;
+				}
+			}
+			++it;
+		}
+
+		this->SaveDB();
+		this->ReplyF(source, "Group %s has been renamed to %s.", groupname.c_str(), newname.c_str());
+		return true;
+	}
 	if (up == "DESCRIPTION")
 	{
 		g->description = value;
@@ -1323,6 +1517,9 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 		}
 		g->joinflags_raw = v;
 		g->joinflags = this->ParseFlags(v, false, GSAccessFlags::NONE);
+		// Atheme behavior: if invalid, JOINFLAGS becomes "+" (all except founder).
+		if (g->joinflags == GSAccessFlags::NONE)
+			g->joinflags = GSAccessFlags::ALL_NOFOUNDER;
 		this->SaveDB();
 		this->ReplyF(source, "Join flags of %s set to %s.", g->name.c_str(), v.c_str());
 		return true;

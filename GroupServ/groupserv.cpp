@@ -77,6 +77,215 @@
 
 namespace
 {
+	bool HasChanServSetAccess(CommandSource& source, ChannelInfo* ci)
+	{
+		return (ci && (source.AccessFor(ci).HasPriv("SET") || source.HasPriv("chanserv/administration")));
+	}
+}
+
+namespace
+{
+	struct GSChanAccessDataType final
+		: Serialize::Type
+	{
+		ExtensibleItem<GSChanAccessData>& item;
+
+		explicit GSChanAccessDataType(ExtensibleItem<GSChanAccessData>& it)
+			: Serialize::Type("GSChanAccessData")
+			, item(it)
+		{
+		}
+
+		void Serialize(Serializable* obj, Serialize::Data& data) const override
+		{
+			const auto* d = static_cast<const GSChanAccessData*>(obj);
+			data.Store("ci", d->object);
+			data.Store("group", d->group);
+			data.Store("group_only", d->group_only ? "1" : "0");
+		}
+
+		Serializable* Unserialize(Serializable* obj, Serialize::Data& data) const override
+		{
+			Anope::string sci, sgroup, sonly;
+			data["ci"] >> sci;
+			data["group"] >> sgroup;
+			data["group_only"] >> sonly;
+
+			ChannelInfo* ci = ChannelInfo::Find(sci);
+			if (!ci)
+				return nullptr;
+
+			const bool only = (sonly == "1" || sonly.equals_ci("true") || sonly.equals_ci("yes") || sonly.equals_ci("on"));
+
+			if (obj)
+			{
+				auto* d = anope_dynamic_static_cast<GSChanAccessData*>(obj);
+				d->object = ci->name;
+				d->group = sgroup;
+				d->group_only = only;
+				return d;
+			}
+
+			return this->item.Set(ci, GSChanAccessData(ci, sgroup, only));
+		}
+	};
+}
+
+class CommandCSSetGroup final
+	: public Command
+{
+	GroupServCore& gs;
+	ExtensibleItem<GSChanAccessData>& item;
+
+public:
+	CommandCSSetGroup(Module* creator, GroupServCore& core, ExtensibleItem<GSChanAccessData>& it)
+		: Command(creator, "chanserv/set/group", 1, 2)
+		, gs(core)
+		, item(it)
+	{
+		this->SetDesc(_("Associate a registered channel with a GroupServ group."));
+		this->SetSyntax(_("\037channel\037 [\037!group|OFF\037]"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		if (Anope::ReadOnly)
+		{
+			source.Reply(READ_ONLY_MODE);
+			return;
+		}
+
+		ChannelInfo* ci = ChannelInfo::Find(params[0]);
+		if (!ci)
+		{
+			source.Reply(CHAN_X_NOT_REGISTERED, params[0].c_str());
+			return;
+		}
+
+		if (!HasChanServSetAccess(source, ci) && source.permission.empty())
+		{
+			source.Reply(ACCESS_DENIED);
+			return;
+		}
+
+		if (params.size() == 1)
+		{
+			auto* d = this->item.Get(ci);
+			if (!d || d->group.empty())
+				source.Reply(_("Group restriction for %s is not set."), ci->name.c_str());
+			else
+				source.Reply(_("Group restriction for %s is %s (%s)."), ci->name.c_str(), d->group.c_str(), d->group_only ? "GROUPONLY" : "not group-only");
+			return;
+		}
+
+		const auto& val = params[1];
+		if (val.equals_ci("OFF"))
+		{
+			this->item.Unset(ci);
+			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to unset GROUP";
+			source.Reply(CHAN_SETTING_UNSET, "GROUP", ci->name.c_str());
+			return;
+		}
+
+		if (!this->gs.DoesGroupExist(val))
+		{
+			source.Reply(_("Group %s does not exist."), val.c_str());
+			return;
+		}
+
+		bool only = false;
+		if (auto* cur = this->item.Get(ci))
+			only = cur->group_only;
+		else
+			only = true; // default to enforcement when a group is set
+
+		this->item.Set(ci, GSChanAccessData(ci, val, only));
+		Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to set GROUP to " << val;
+		source.Reply(CHAN_SETTING_CHANGED, "GROUP", ci->name.c_str(), val.c_str());
+	}
+};
+
+class CommandCSSetGroupOnly final
+	: public Command
+{
+	GroupServCore& gs;
+	ExtensibleItem<GSChanAccessData>& item;
+
+public:
+	CommandCSSetGroupOnly(Module* creator, GroupServCore& core, ExtensibleItem<GSChanAccessData>& it)
+		: Command(creator, "chanserv/set/grouponly", 2, 2)
+		, gs(core)
+		, item(it)
+	{
+		this->SetDesc(_("Require GroupServ group membership to remain in the channel."));
+		this->SetSyntax(_("\037channel\037 <ON|OFF>"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		if (Anope::ReadOnly)
+		{
+			source.Reply(READ_ONLY_MODE);
+			return;
+		}
+
+		ChannelInfo* ci = ChannelInfo::Find(params[0]);
+		if (!ci)
+		{
+			source.Reply(CHAN_X_NOT_REGISTERED, params[0].c_str());
+			return;
+		}
+
+		if (!HasChanServSetAccess(source, ci) && source.permission.empty())
+		{
+			source.Reply(ACCESS_DENIED);
+			return;
+		}
+
+		const auto setting = params[1].upper();
+		if (setting != "ON" && setting != "OFF")
+		{
+			source.Reply(_("Syntax: %s %s"), source.command.c_str(), "\037channel\037 <ON|OFF>");
+			return;
+		}
+
+		auto* cur = this->item.Get(ci);
+		const bool enable = (setting == "ON");
+
+		if (enable)
+		{
+			if (!cur || cur->group.empty())
+			{
+				source.Reply(_("You must set GROUP first (use: CHANSERV SET %s GROUP <!group>)."), ci->name.c_str());
+				return;
+			}
+
+			if (!this->gs.DoesGroupExist(cur->group))
+			{
+				source.Reply(_("Group %s does not exist."), cur->group.c_str());
+				return;
+			}
+
+			this->item.Set(ci, GSChanAccessData(ci, cur->group, true));
+			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to enable GROUPONLY";
+			source.Reply(CHAN_SETTING_CHANGED, "GROUPONLY", ci->name.c_str(), "ON");
+		}
+		else
+		{
+			if (!cur)
+			{
+				source.Reply(_("GROUPONLY for %s is already OFF."), ci->name.c_str());
+				return;
+			}
+			this->item.Set(ci, GSChanAccessData(ci, cur->group, false));
+			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to disable GROUPONLY";
+			source.Reply(CHAN_SETTING_CHANGED, "GROUPONLY", ci->name.c_str(), "OFF");
+		}
+	}
+};
+
+namespace
+{
 	void ReplySyntaxAndMoreInfo(GroupServCore& gs, CommandSource& source, const Anope::string& syntax)
 	{
 		if (syntax.empty())
@@ -254,6 +463,32 @@ public:
 	}
 };
 
+class CommandGroupServListChans final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandGroupServListChans(Module* creator, GroupServCore& core)
+		: Command(creator, "groupserv/listchans", 1, 1)
+		, gs(core)
+	{
+		this->SetDesc(_("Lists channels associated with a group."));
+		this->SetSyntax(_("<!group>"));
+		this->AllowUnregistered(true);
+	}
+
+	void OnSyntaxError(CommandSource& source, const Anope::string&) override
+	{
+		ReplySyntaxAndMoreInfo(this->gs, source, _("<!group>"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		this->gs.ListChans(source, params[0]);
+	}
+};
+
 class CommandGroupServFlags final
 	: public Command
 {
@@ -309,6 +544,42 @@ public:
 	}
 };
 
+class CommandGroupServToggleGroupFlag final
+	: public Command
+{
+	GroupServCore& gs;
+	GSGroupFlags flag;
+
+public:
+	CommandGroupServToggleGroupFlag(Module* creator, GroupServCore& core, const Anope::string& name, GSGroupFlags f)
+		: Command(creator, name, 2, 2)
+		, gs(core)
+		, flag(f)
+	{
+		this->SetDesc(_("Toggle a group limit/flag (Services Operator)."));
+		this->SetSyntax(_("<!group> <ON|OFF>"));
+		this->AllowUnregistered(true);
+	}
+
+	void OnSyntaxError(CommandSource& source, const Anope::string&) override
+	{
+		ReplySyntaxAndMoreInfo(this->gs, source, _("<!group> <ON|OFF>"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		const auto val = params[1].upper();
+		if (val != "ON" && val != "OFF")
+		{
+			ReplySyntaxAndMoreInfo(this->gs, source, _("<!group> <ON|OFF>"));
+			return;
+		}
+		const bool enabled = (val == "ON");
+		if (this->gs.SetGroupFlag(source, params[0], this->flag, enabled))
+			this->gs.ReplyF(source, "%s for %s set to %s.", source.command.c_str(), params[0].c_str(), enabled ? "ON" : "OFF");
+	}
+};
+
 class GroupServTimer final
 	: public Timer
 {
@@ -331,6 +602,10 @@ class GroupServ final
 	: public Module
 {
 	GroupServCore core;
+	ExtensibleItem<GSChanAccessData> chanaccess;
+	GSChanAccessDataType chanaccess_type;
+	CommandCSSetGroup cmd_cs_set_group;
+	CommandCSSetGroupOnly cmd_cs_set_grouponly;
 
 	CommandGroupServRegister cmd_register;
 	CommandGroupServDrop cmd_drop;
@@ -339,9 +614,12 @@ class GroupServ final
 	CommandGroupServList cmd_list;
 	CommandGroupServJoin cmd_join;
 	CommandGroupServInvite cmd_invite;
+	CommandGroupServListChans cmd_listchans;
 	CommandGroupServFlags cmd_flags;
 	CommandGroupServFlags cmd_fflags;
 	CommandGroupServSet cmd_set;
+	CommandGroupServToggleGroupFlag cmd_acsnolimit;
+	CommandGroupServToggleGroupFlag cmd_regnolimit;
 
 	std::unique_ptr<GroupServTimer> save;
 
@@ -356,6 +634,10 @@ public:
 	GroupServ(const Anope::string& modname, const Anope::string& creator)
 		: Module(modname, creator, VENDOR)
 		, core(this)
+		, chanaccess(this, "groupserv:chanaccess")
+		, chanaccess_type(chanaccess)
+		, cmd_cs_set_group(this, core, chanaccess)
+		, cmd_cs_set_grouponly(this, core, chanaccess)
 		, cmd_register(this, core)
 		, cmd_drop(this, core, "groupserv/drop", false)
 		, cmd_fdrop(this, core, "groupserv/fdrop", true)
@@ -363,10 +645,41 @@ public:
 		, cmd_list(this, core)
 		, cmd_join(this, core)
 		, cmd_invite(this, core)
+		, cmd_listchans(this, core)
 		, cmd_flags(this, core, "groupserv/flags", false)
 		, cmd_fflags(this, core, "groupserv/fflags", true)
 		, cmd_set(this, core)
+		, cmd_acsnolimit(this, core, "groupserv/acsnolimit", GSGroupFlags::ACSNOLIMIT)
+		, cmd_regnolimit(this, core, "groupserv/regnolimit", GSGroupFlags::REGNOLIMIT)
 	{
+		this->core.SetChanAccessItem(&this->chanaccess);
+	}
+
+	~GroupServ() override
+	{
+		// Persist serialized channel extensions (GROUP/GROUPONLY) across MODRELOAD.
+		// This runs before member destructors, so the extension data still exists.
+		this->core.SaveDB();
+		Anope::SaveDatabases();
+	}
+
+	void OnJoinChannel(User* user, Channel* c) override
+	{
+		if (!c || !c->ci || !user || !user->server || !user->server->IsSynced() || user->server == Me)
+			return;
+
+		auto* d = this->chanaccess.Get(c->ci);
+		if (!d || !d->group_only || d->group.empty())
+			return;
+
+		NickCore* nc = user->Account();
+		if (nc && nc->IsServicesOper() && nc->o && nc->o->ot && (nc->o->ot->HasPriv("chanserv/administration") || nc->o->ot->HasPriv("groupserv/admin")))
+			return;
+
+		if (this->core.IsMemberOfGroup(d->group, nc))
+			return;
+
+		c->Kick(NULL, user, "You must be a member of %s to join %s.", d->group.c_str(), c->name.c_str());
 	}
 
 	void OnReload(Configuration::Conf& conf) override

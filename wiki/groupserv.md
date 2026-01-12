@@ -12,10 +12,13 @@ This module is **Atheme-like**, not a byte-for-byte port.
 - Invite accounts to a group, or make a group open to allow self-joins
 - Maintain a group member list with per-member permissions
 - Set “join flags” so new joiners automatically receive specific permissions
+- (Optional) Mark registered channels as “group-only” so non-members are auto-kicked
 
 ## Important note about `V`
 
-`V` in GroupServ is a **GroupServ access flag** (ACLVIEW: allowed to view the group access list).
+`V` in GroupServ is accepted as an alias for the **GroupServ access flag** `A` (ACLVIEW: allowed to view the group access list).
+
+You may see ACLVIEW displayed as `A` in outputs.
 
 It is **not** an IRC user mode. If you try `/mode Nick +V`, InspIRCd will reject it.
 
@@ -43,7 +46,10 @@ These are **GroupServ access flags**, not channel modes.
 Accepted formats:
 - space-separated: `+V +I +S`
 - long names: `+ACLVIEW +INVITE +SET`
-- compact (Atheme-style): `+VI`
+- compact (Atheme-style): `+VI` or `+fAsivb`
+
+Notes:
+- `V` is accepted as an alias for `A` (ACLVIEW).
 
 ## Commands
 
@@ -51,10 +57,30 @@ All commands are used as:
 
 - `/msg GroupServ <COMMAND> ...`
 
+### Channel restrictions (ChanServ)
+
+GroupServ can associate a registered channel with a group and (optionally) enforce “group-only” membership.
+
+- `SET #channel GROUP <!group>`
+  - Associates the channel with the group.
+  - By default, this also enables GROUPONLY enforcement.
+  - Example: `/msg ChanServ SET #dev GROUP !devs`
+
+- `SET #channel GROUPONLY <ON|OFF>`
+  - Toggles enforcement for the channel.
+  - When enabled, users who join the channel but are not members of the group are automatically kicked.
+  - Example: `/msg ChanServ SET #dev GROUPONLY ON`
+
+Important: Anope does not provide a true “pre-join deny” hook for this, so the behavior is “join then kick” (Atheme-like in practice).
+
 ### Public
 
 - `HELP`
   - Shows help for GroupServ commands.
+
+- `LISTCHANS <!group>`
+  - Lists registered channels explicitly associated with the group via `ChanServ SET #channel GROUP`.
+  - Example: `/msg GroupServ LISTCHANS !devs`
 
 - `REGISTER <!group>`
   - Creates a group and makes your account the founder.
@@ -152,12 +178,17 @@ All commands are used as:
 ## Access flag letters
 
 - `F` — FOUNDER (implies management powers)
-- `I` — INVITE (invite accounts)
-- `S` — SET (change group settings)
-- `M` — FLAGS/MANAGE (edit members/flags)
-- `V` — ACLVIEW (view group access list)
-- `B` — BAN (blocks access)
+- `f` — FLAGS/MANAGE (edit members/flags)
+- `A` (or `V`) — ACLVIEW (view group access list)
+- `m` — MEMO
+- `c` — CHANACCESS
+- `v` — VHOST
+- `s` — SET (change group settings)
+- `i` — INVITE (invite accounts)
+- `b` — BAN (blocks access)
 
 ## Data storage
 
 Group data is stored as a flatfile in the Anope data directory (e.g. `data/groupserv.db`) and written atomically (via `.tmp` then rename).
+
+Channel ↔ group association (and GROUPONLY state) are stored on the registered channel so they persist across restarts and module reloads.
