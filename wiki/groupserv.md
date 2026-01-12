@@ -14,13 +14,21 @@ This module is **Atheme-like**, not a byte-for-byte port.
 - Set “join flags” so new joiners automatically receive specific permissions
 - (Optional) Mark registered channels as “group-only” so non-members are auto-kicked
 
-## Important note about `V`
+## Permissions
 
-`V` in GroupServ is accepted as an alias for the **GroupServ access flag** `A` (ACLVIEW: allowed to view the group access list).
+These are **GroupServ access flags** (not IRC user modes):
 
-You may see ACLVIEW displayed as `A` in outputs.
+- `+f` - Enables modification of group access list.
+- `+F` - Grants full founder access.
+- `+A` - Enables viewing of group access list.
+- `+m` - Read memos sent to the group.
+- `+c` - Have channel access in channels where the group has sufficient privileges.
+- `+v` - Take vhosts offered to the group through HostServ.
+- `+s` - Ability to use GroupServ SET commands on the group.
+- `+b` - Ban a user from the group. The user will not be able to join the group with the JOIN command and it will not show up in their NickServ INFO or anywhere else. NOTE that setting this flag will NOT automatically remove the users' privileges (if applicable).
+- `+i` - Grants the ability to invite users to the group.
 
-It is **not** an IRC user mode. If you try `/mode Nick +V`, InspIRCd will reject it.
+It is **not** an IRC user mode. If you try `/mode Nick +A`, InspIRCd will reject it.
 
 ## Configuration
 
@@ -44,12 +52,13 @@ Key module options:
 These are **GroupServ access flags**, not channel modes.
 
 Accepted formats:
-- space-separated: `+V +I +S`
+- space-separated: `+A +i +s`
 - long names: `+ACLVIEW +INVITE +SET`
-- compact (Atheme-style): `+VI` or `+fAsivb`
+- compact (Atheme-style): `+Ais` or `+fAsivb`
 
 Notes:
-- `V` is accepted as an alias for `A` (ACLVIEW).
+- Single-letter flags are case-sensitive (Atheme-style). Use the letters shown in the Permissions section.
+- Long names are case-insensitive (e.g. `+invite` works).
 
 ## Commands
 
@@ -175,7 +184,7 @@ These are exposed as **MemoServ commands** (requires MemoServ to be loaded and c
 
 - `INVITE <!group> <account>`
   - Invites a NickServ account to a group.
-  - Requires you have the group access flag `I` (INVITE) in that group.
+  - Requires you have the group access flag `i` (INVITE) in that group.
   - Example: `/msg GroupServ INVITE !staff Alice`
     - Meaning: create an invite for account `Alice`.
     - The invited user accepts with: `/msg GroupServ JOIN !staff`
@@ -189,10 +198,10 @@ These are exposed as **MemoServ commands** (requires MemoServ to be loaded and c
 - `FLAGS <!group> <account> <flags>`
   - Adds/removes flags for a member (requires `M`/manage or founder).
   - Examples:
-    - `/msg GroupServ FLAGS !staff Alice +IV`
-      - Meaning: give Alice INVITE (`I`) and ACLVIEW (`V`).
-    - `/msg GroupServ FLAGS !staff Alice -I`
-      - Meaning: remove INVITE (`I`) from Alice.
+    - `/msg GroupServ FLAGS !staff Alice +iA`
+      - Meaning: give Alice INVITE (`i`) and ACLVIEW (`A`).
+    - `/msg GroupServ FLAGS !staff Alice -i`
+      - Meaning: remove INVITE (`i`) from Alice.
     - `/msg GroupServ FLAGS !staff Alice +F`
       - Meaning: make Alice a founder (and she will automatically gain management powers).
 
@@ -221,9 +230,9 @@ These are exposed as **MemoServ commands** (requires MemoServ to be loaded and c
 - `SET <!group> JOINFLAGS <flags|OFF|NONE>`
   - Controls what flags are granted when someone joins the group.
   - Examples:
-    - `/msg GroupServ SET !helpers JOINFLAGS +V`
+    - `/msg GroupServ SET !helpers JOINFLAGS +A`
       - Meaning: new joiners can view the group member list.
-    - `/msg GroupServ SET !helpers JOINFLAGS +VI`
+    - `/msg GroupServ SET !helpers JOINFLAGS +Ai`
       - Meaning: new joiners can view and invite.
     - `/msg GroupServ SET !helpers JOINFLAGS OFF`
       - Meaning: clear group-specific join flags (falls back to `default_joinflags`).
