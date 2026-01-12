@@ -195,10 +195,14 @@ Channel ↔ group association (and GROUPONLY state) are stored on the registered
 
 ## Memory usage notes
 
-GroupServ keeps in-memory maps for:
-- groups + access lists
-- pending invites
-- pending DROP confirmation challenges
+GroupServ persists long-lived state to disk (group data in `groupserv.db`, and channel association/GROUPONLY state on the registered channel), but it also keeps a working set in memory while services are running.
+
+In memory it keeps:
+- groups + access lists (loaded from `groupserv.db`)
+- pending invites (transient; not intended to survive restart)
+- pending DROP confirmation challenges (transient)
+
+Keeping this in memory avoids doing slow on-demand disk/DB reads for common operations (including join-time enforcement).
 
 To keep memory usage bounded over time:
 - expired invites are purged
