@@ -101,6 +101,26 @@ Important: Anope does not provide a true “pre-join deny” hook for this, so t
   - Works if the group is open, or you have a pending invite.
   - Example: `/msg GroupServ JOIN !staff`
 
+### Group memos (MemoServ integration)
+
+GroupServ supports **shared group memos** stored in `groupserv.db`.
+
+These are exposed as **MemoServ commands** (requires MemoServ to be loaded and command blocks added):
+
+- `GSEND <!group> <memo-text>`
+  - Sends a memo to the group (requires GroupServ access flag `m`).
+
+- `GLIST <!group>`
+  - Lists memos for the group (requires GroupServ access flag `m`).
+
+- `GREAD <!group> <number>`
+  - Reads a memo by number (requires GroupServ access flag `m`).
+  - Also accepts `#<number>` (e.g. `#1`).
+
+- `GDEL <!group> <number>`
+  - Deletes a memo by number (requires GroupServ access flag `s`/SET).
+  - Also accepts `#<number>` (e.g. `#1`).
+
 ### Membership / invites
 
 - `INVITE <!group> <account>`

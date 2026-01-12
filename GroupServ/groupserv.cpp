@@ -580,6 +580,120 @@ public:
 	}
 };
 
+class CommandMSGroupSend final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandMSGroupSend(Module* creator, GroupServCore& core)
+		: Command(creator, "memoserv/gsend", 2, 2)
+		, gs(core)
+	{
+		this->SetDesc(_("Send a memo to a GroupServ group"));
+		this->SetSyntax(_("<!group> \037memo-text\037"));
+		this->AllowUnregistered(true);
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		this->gs.SendMemo(source, params[0], params[1]);
+	}
+};
+
+class CommandMSGroupList final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandMSGroupList(Module* creator, GroupServCore& core)
+		: Command(creator, "memoserv/glist", 1, 1)
+		, gs(core)
+	{
+		this->SetDesc(_("List memos for a GroupServ group"));
+		this->SetSyntax(_("<!group>"));
+		this->AllowUnregistered(true);
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		this->gs.ListMemos(source, params[0]);
+	}
+};
+
+static bool TryParseMemoIndex(const Anope::string& in, unsigned& idx)
+{
+	Anope::string token = in;
+	token.trim();
+
+	const auto sp = token.rfind(' ');
+	if (sp != Anope::string::npos)
+		token = token.substr(sp + 1);
+
+	token.trim();
+	if (!token.empty() && token[0] == '#')
+		token.erase(0, 1);
+
+	token.trim();
+	idx = Anope::Convert(token, 0u);
+	return idx > 0;
+}
+
+class CommandMSGroupRead final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandMSGroupRead(Module* creator, GroupServCore& core)
+		: Command(creator, "memoserv/gread", 2, 2)
+		, gs(core)
+	{
+		this->SetDesc(_("Read a memo for a GroupServ group"));
+		this->SetSyntax(_("<!group> \037number\037"));
+		this->AllowUnregistered(true);
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		unsigned idx = 0;
+		if (!TryParseMemoIndex(params[1], idx))
+		{
+			this->gs.Reply(source, "Invalid memo number.");
+			return;
+		}
+		this->gs.ReadMemo(source, params[0], idx);
+	}
+};
+
+class CommandMSGroupDel final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandMSGroupDel(Module* creator, GroupServCore& core)
+		: Command(creator, "memoserv/gdel", 2, 2)
+		, gs(core)
+	{
+		this->SetDesc(_("Delete a memo for a GroupServ group"));
+		this->SetSyntax(_("<!group> \037number\037"));
+		this->AllowUnregistered(true);
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		unsigned idx = 0;
+		if (!TryParseMemoIndex(params[1], idx))
+		{
+			this->gs.Reply(source, "Invalid memo number.");
+			return;
+		}
+		this->gs.DelMemo(source, params[0], idx);
+	}
+};
+
 class GroupServTimer final
 	: public Timer
 {
@@ -621,6 +735,11 @@ class GroupServ final
 	CommandGroupServToggleGroupFlag cmd_acsnolimit;
 	CommandGroupServToggleGroupFlag cmd_regnolimit;
 
+	CommandMSGroupSend cmd_ms_gsend;
+	CommandMSGroupList cmd_ms_glist;
+	CommandMSGroupRead cmd_ms_gread;
+	CommandMSGroupDel cmd_ms_gdel;
+
 	std::unique_ptr<GroupServTimer> save;
 
 	void RecreateTimers()
@@ -651,6 +770,10 @@ public:
 		, cmd_set(this, core)
 		, cmd_acsnolimit(this, core, "groupserv/acsnolimit", GSGroupFlags::ACSNOLIMIT)
 		, cmd_regnolimit(this, core, "groupserv/regnolimit", GSGroupFlags::REGNOLIMIT)
+		, cmd_ms_gsend(this, core)
+		, cmd_ms_glist(this, core)
+		, cmd_ms_gread(this, core)
+		, cmd_ms_gdel(this, core)
 	{
 		this->core.SetChanAccessItem(&this->chanaccess);
 	}

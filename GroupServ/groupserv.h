@@ -104,6 +104,15 @@ struct GSGroupRecord final
 
 	GSAccessFlags joinflags = GSAccessFlags::NONE;
 
+	struct Memo final
+	{
+		Anope::string sender;
+		time_t time = 0;
+		Anope::string text;
+	};
+
+	std::vector<Memo> memos;
+
 	// account (lowercased) -> flags
 	std::map<Anope::string, GSAccessFlags> access;
 };
@@ -169,6 +178,11 @@ public:
 	bool ShowFlags(CommandSource& source, const Anope::string& groupname);
 	bool SetFlags(CommandSource& source, const Anope::string& groupname, const Anope::string& account, const Anope::string& changes, bool force);
 
+	bool SendMemo(CommandSource& source, const Anope::string& groupname, const Anope::string& text);
+	bool ListMemos(CommandSource& source, const Anope::string& groupname);
+	bool ReadMemo(CommandSource& source, const Anope::string& groupname, unsigned index);
+	bool DelMemo(CommandSource& source, const Anope::string& groupname, unsigned index);
+
 	bool SetOption(CommandSource& source, const Anope::string& groupname, const Anope::string& setting, const Anope::string& value);
 	bool SetGroupFlag(CommandSource& source, const Anope::string& groupname, GSGroupFlags flag, bool enabled);
 
@@ -190,6 +204,7 @@ private:
 
 	unsigned int maxgroups = 5;
 	unsigned int maxgroupacs = 0;
+	unsigned int maxgroupmemos = 50; // 0 = unlimited
 	bool enable_open_groups = true;
 	GSAccessFlags default_joinflags = GSAccessFlags::NONE;
 	
@@ -208,6 +223,7 @@ private:
 	static Anope::string NormalizeKey(const Anope::string& s);
 	static Anope::string DropChallengeKey(const Anope::string& account, const Anope::string& group);
 	void PurgeExpiredState();
+	void ClampMemos(GSGroupRecord& g);
 
 	GSGroupRecord* FindGroup(const Anope::string& name);
 	GSGroupRecord& GetOrCreateGroup(const Anope::string& name);

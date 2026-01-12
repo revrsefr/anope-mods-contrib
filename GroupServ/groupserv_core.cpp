@@ -680,6 +680,8 @@ void GroupServCore::LoadDB()
 	// HelpServ-style key=value flatfile.
 	uint64_t version = 0;
 	std::map<Anope::string, std::map<uint64_t, std::pair<Anope::string, uint64_t>>> access_tmp; // groupkey -> idx -> (acct, flags)
+	struct MemoTmp { Anope::string sender; uint64_t time = 0; Anope::string text; };
+	std::map<Anope::string, std::map<uint64_t, MemoTmp>> memos_tmp; // groupkey -> idx -> memo
 	struct InviteTmp { Anope::string account; Anope::string group; uint64_t created = 0; uint64_t expires = 0; };
 	std::map<uint64_t, InviteTmp> invites_tmp;
 
@@ -752,6 +754,20 @@ void GroupServCore::LoadDB()
 				else if (afield.equals_ci("flags"))
 					ParseU64(val, entry.second);
 			}
+			else if (field.equals_ci("memo") && parts.size() >= 5)
+			{
+				uint64_t idx = 0;
+				if (!ParseU64(parts[3], idx) || idx > 1000000)
+					continue;
+				const auto mfield = parts[4];
+				auto& memo = memos_tmp[gkey][idx];
+				if (mfield.equals_ci("sender"))
+					memo.sender = val;
+				else if (mfield.equals_ci("time"))
+					ParseU64(val, memo.time);
+				else if (mfield.equals_ci("text"))
+					memo.text = val;
+			}
 		}
 		else if (parts[0].equals_ci("invite") && parts.size() >= 3)
 		{
@@ -791,6 +807,23 @@ void GroupServCore::LoadDB()
 			if (entry.first.empty())
 				continue;
 			g.access[NormalizeKey(entry.first)] = static_cast<GSAccessFlags>(static_cast<unsigned int>(entry.second));
+		}
+
+		g.memos.clear();
+		auto mit = memos_tmp.find(gkey);
+		if (mit != memos_tmp.end())
+		{
+			for (const auto& [_, memo] : mit->second)
+			{
+				if (memo.text.empty())
+					continue;
+				GSGroupRecord::Memo out;
+				out.sender = memo.sender;
+				out.time = static_cast<time_t>(memo.time);
+				out.text = memo.text;
+				g.memos.push_back(std::move(out));
+			}
+			this->ClampMemos(g);
 		}
 	}
 
@@ -861,6 +894,14 @@ void GroupServCore::SaveDB()
 			out << "group." << gkey << ".access." << static_cast<uint64_t>(i) << ".account=" << EscapeValue(a[i].first) << "\n";
 			out << "group." << gkey << ".access." << static_cast<uint64_t>(i) << ".flags=" << static_cast<uint64_t>(static_cast<unsigned int>(a[i].second)) << "\n";
 		}
+
+		for (size_t i = 0; i < g.memos.size(); ++i)
+		{
+			const auto& m = g.memos[i];
+			out << "group." << gkey << ".memo." << static_cast<uint64_t>(i) << ".sender=" << EscapeValue(m.sender) << "\n";
+			out << "group." << gkey << ".memo." << static_cast<uint64_t>(i) << ".time=" << static_cast<uint64_t>(m.time) << "\n";
+			out << "group." << gkey << ".memo." << static_cast<uint64_t>(i) << ".text=" << EscapeValue(m.text) << "\n";
+		}
 	}
 
 	// Invites.
@@ -920,6 +961,7 @@ void GroupServCore::OnReload(Configuration::Conf& conf)
 
 	this->maxgroups = mod->Get<unsigned int>("maxgroups", "5");
 	this->maxgroupacs = mod->Get<unsigned int>("maxgroupacs", "0");
+	this->maxgroupmemos = mod->Get<unsigned int>("maxgroupmemos", "50");
 	this->enable_open_groups = mod->Get<bool>("enable_open_groups", "yes");
 
 	this->default_joinflags = this->ParseFlags(mod->Get<Anope::string>("default_joinflags", ""), false, GSAccessFlags::NONE);
@@ -1597,4 +1639,176 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 
 	this->Reply(source, "Unknown setting.");
 	return false;
+}
+
+void GroupServCore::ClampMemos(GSGroupRecord& g)
+{
+	if (this->maxgroupmemos == 0)
+		return;
+	if (g.memos.size() <= this->maxgroupmemos)
+		return;
+
+	const size_t drop = g.memos.size() - this->maxgroupmemos;
+	g.memos.erase(g.memos.begin(), g.memos.begin() + static_cast<ptrdiff_t>(drop));
+}
+
+bool GroupServCore::SendMemo(CommandSource& source, const Anope::string& groupname, const Anope::string& text)
+{
+	if (!source.GetAccount())
+	{
+		this->Reply(source, "You must be identified to use this command.");
+		return false;
+	}
+
+	if (Anope::ReadOnly && !source.IsOper())
+	{
+		this->Reply(source, READ_ONLY_MODE);
+		return false;
+	}
+
+	auto* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "Group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	if (!this->HasAccess(*g, source.GetAccount(), GSAccessFlags::MEMO) && !this->IsAuspex(source))
+	{
+		this->Reply(source, ACCESS_DENIED);
+		return false;
+	}
+
+	if (text.empty())
+	{
+		this->Reply(source, "Memo text cannot be empty.");
+		return false;
+	}
+
+	if (this->maxgroupmemos != 0 && g->memos.size() >= this->maxgroupmemos)
+	{
+		this->ReplyF(source, "Group %s already has too many memos (%u).", g->name.c_str(), this->maxgroupmemos);
+		return false;
+	}
+
+	GSGroupRecord::Memo m;
+	m.sender = source.GetAccount()->display;
+	m.time = Anope::CurTime;
+	m.text = text;
+	g->memos.push_back(std::move(m));
+	this->ClampMemos(*g);
+	this->SaveDB();
+	this->ReplyF(source, "Memo sent to %s.", g->name.c_str());
+	return true;
+}
+
+bool GroupServCore::ListMemos(CommandSource& source, const Anope::string& groupname)
+{
+	if (!source.GetAccount())
+	{
+		this->Reply(source, "You must be identified to use this command.");
+		return false;
+	}
+
+	auto* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "Group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	if (!this->HasAccess(*g, source.GetAccount(), GSAccessFlags::MEMO) && !this->IsAuspex(source))
+	{
+		this->Reply(source, ACCESS_DENIED);
+		return false;
+	}
+
+	if (g->memos.empty())
+	{
+		this->ReplyF(source, "No memos for %s.", g->name.c_str());
+		return true;
+	}
+
+	this->ReplyF(source, "Memos for %s:", g->name.c_str());
+	for (size_t i = 0; i < g->memos.size(); ++i)
+	{
+		const auto& m = g->memos[i];
+		this->ReplyF(source, "[%zu] %s (%s)", i + 1, m.sender.c_str(), Anope::strftime(m.time, source.GetAccount(), true).c_str());
+	}
+	return true;
+}
+
+bool GroupServCore::ReadMemo(CommandSource& source, const Anope::string& groupname, unsigned index)
+{
+	if (!source.GetAccount())
+	{
+		this->Reply(source, "You must be identified to use this command.");
+		return false;
+	}
+
+	auto* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "Group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	if (!this->HasAccess(*g, source.GetAccount(), GSAccessFlags::MEMO) && !this->IsAuspex(source))
+	{
+		this->Reply(source, ACCESS_DENIED);
+		return false;
+	}
+
+	if (index == 0 || index > g->memos.size())
+	{
+		this->Reply(source, "Invalid memo number.");
+		return false;
+	}
+
+	const auto& m = g->memos[index - 1];
+	this->ReplyF(source, "Memo %u for %s:", index, g->name.c_str());
+	this->ReplyF(source, "From: %s", m.sender.c_str());
+	this->ReplyF(source, "Date: %s", Anope::strftime(m.time, source.GetAccount(), true).c_str());
+	this->ReplyF(source, "Text: %s", m.text.c_str());
+	return true;
+}
+
+bool GroupServCore::DelMemo(CommandSource& source, const Anope::string& groupname, unsigned index)
+{
+	if (!source.GetAccount())
+	{
+		this->Reply(source, "You must be identified to use this command.");
+		return false;
+	}
+
+	if (Anope::ReadOnly && !source.IsOper())
+	{
+		this->Reply(source, READ_ONLY_MODE);
+		return false;
+	}
+
+	auto* g = this->FindGroup(groupname);
+	if (!g)
+	{
+		this->ReplyF(source, "Group %s does not exist.", groupname.c_str());
+		return false;
+	}
+
+	// Deleting shared memos is a management action.
+	if (!this->HasAccess(*g, source.GetAccount(), GSAccessFlags::SET) && !this->IsAuspex(source))
+	{
+		this->Reply(source, ACCESS_DENIED);
+		return false;
+	}
+
+	if (index == 0 || index > g->memos.size())
+	{
+		this->Reply(source, "Invalid memo number.");
+		return false;
+	}
+
+	g->memos.erase(g->memos.begin() + static_cast<ptrdiff_t>(index - 1));
+	this->SaveDB();
+	this->ReplyF(source, "Deleted memo %u for %s.", index, g->name.c_str());
+	return true;
 }
