@@ -96,6 +96,26 @@ Notes:
 - `+c` does not auto-op people by itself; it just makes ChanServ privilege checks succeed when the channel’s access list grants the group those privileges.
 - This only applies for accounts which are members of the group *and* have GroupServ flag `+c` in that group.
 
+### Group vhosts (+v)
+
+GroupServ supports a simple “group vhost” workflow:
+
+- Founders / SET users can store a vhost on the group with `SET VHOST`.
+- Members who have GroupServ flag `+v` (VHOST) can then activate that vhost on their own NickServ account.
+
+Commands:
+
+- `SET <!group> VHOST <hostmask>`
+  - Stores the vhost to use for this group.
+  - Examples:
+    - `/msg GroupServ SET !devs VHOST network.gp.devs`
+    - `/msg GroupServ SET !devs VHOST myident@network.gp.devs`
+  - Clear it: `/msg GroupServ SET !devs VHOST OFF`
+
+- `VHOST <!group> [OFF]`
+  - Activates the group’s stored vhost for your account (requires group flag `+v`).
+  - Remove your vhost: `/msg GroupServ VHOST !devs OFF`
+
 ### Public
 
 - `HELP`
@@ -207,6 +227,10 @@ These are exposed as **MemoServ commands** (requires MemoServ to be loaded and c
       - Meaning: new joiners can view and invite.
     - `/msg GroupServ SET !helpers JOINFLAGS OFF`
       - Meaning: clear group-specific join flags (falls back to `default_joinflags`).
+
+- `SET <!group> VHOST <hostmask|OFF>`
+  - Sets or clears the stored group vhost.
+  - Note: this does not automatically apply to members; they must run `VHOST <!group>`.
 
 ### Drop
 

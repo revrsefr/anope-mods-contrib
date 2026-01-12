@@ -78,6 +78,26 @@
 
 namespace
 {
+	bool ParseHostMask(const Anope::string& rawhostmask, Anope::string& user, Anope::string& host)
+	{
+		Anope::string raw = rawhostmask;
+		raw.trim();
+		if (raw.empty())
+			return false;
+		if (raw.find(' ') != Anope::string::npos)
+			return false;
+
+		size_t a = raw.find('@');
+		if (a == Anope::string::npos)
+			host = raw;
+		else
+		{
+			user = raw.substr(0, a);
+			host = raw.substr(a + 1);
+		}
+		return !host.empty();
+	}
+
 	bool HasChanServSetAccess(CommandSource& source, ChannelInfo* ci)
 	{
 		return (ci && (source.AccessFor(ci).HasPriv("SET") || source.HasPriv("chanserv/administration")));
@@ -548,6 +568,124 @@ public:
 	}
 };
 
+class CommandGroupServVHost final
+	: public Command
+{
+	GroupServCore& gs;
+
+	static void SyncAliases(const NickAlias* na)
+	{
+		if (!na || !na->HasVHost() || !na->nc)
+			return;
+		for (auto* nick : *na->nc->aliases)
+		{
+			if (nick && nick != na)
+				nick->SetVHost(na->GetVHostIdent(), na->GetVHostHost(), na->GetVHostCreator());
+		}
+	}
+
+public:
+	CommandGroupServVHost(Module* creator, GroupServCore& core)
+		: Command(creator, "groupserv/vhost", 1, 2)
+		, gs(core)
+	{
+		this->SetDesc(_("Activate or remove a group vhost (requires +v)"));
+		this->SetSyntax(_("<!group> [OFF]"));
+		this->AllowUnregistered(true);
+	}
+
+	void OnSyntaxError(CommandSource& source, const Anope::string&) override
+	{
+		ReplySyntaxAndMoreInfo(this->gs, source, _("<!group> [OFF]"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		if (!source.GetAccount())
+		{
+			this->gs.Reply(source, "You must be identified to use VHOST.");
+			return;
+		}
+		if (!IRCD || !IRCD->CanSetVHost)
+		{
+			this->gs.Reply(source, "Your IRCd does not support vhosts.");
+			return;
+		}
+
+		const auto& groupname = params[0];
+		if (!this->gs.DoesGroupExist(groupname))
+		{
+			this->gs.ReplyF(source, "Group %s does not exist.", groupname.c_str());
+			return;
+		}
+		if (!this->gs.HasGroupAccess(groupname, source.GetAccount(), GSAccessFlags::VHOST) && !this->gs.IsAuspex(source))
+		{
+			this->gs.Reply(source, ACCESS_DENIED);
+			return;
+		}
+
+		NickAlias* na = NickAlias::Find(source.GetAccount()->display);
+		if (!na)
+		{
+			this->gs.Reply(source, "Your account has no NickAlias.");
+			return;
+		}
+
+		if (params.size() >= 2 && params[1].equals_ci("OFF"))
+		{
+			if (!na->HasVHost())
+			{
+				this->gs.Reply(source, "You do not have a vhost set.");
+				return;
+			}
+			FOREACH_MOD(OnDeleteVHost, (na));
+			na->RemoveVHost();
+			this->gs.Reply(source, "Your vhost has been removed.");
+			return;
+		}
+
+		Anope::string gvhost;
+		if (!this->gs.GetGroupVHost(groupname, gvhost) || gvhost.empty())
+		{
+			this->gs.ReplyF(source, "No group vhost is set for %s.", groupname.c_str());
+			this->gs.Reply(source, "Set one with: /msg GroupServ SET <!group> VHOST <hostmask>");
+			return;
+		}
+
+		Anope::string user, host;
+		if (!ParseHostMask(gvhost, user, host))
+		{
+			this->gs.Reply(source, "The group vhost is invalid. Ask a founder to re-set it.");
+			return;
+		}
+		if (!user.empty() && !IRCD->CanSetVIdent)
+		{
+			this->gs.Reply(source, HOST_NO_VIDENT);
+			return;
+		}
+		if (host.length() > IRCD->MaxHost)
+		{
+			source.Reply(HOST_SET_VHOST_TOO_LONG, IRCD->MaxHost);
+			return;
+		}
+		if (!IRCD->IsHostValid(host))
+		{
+			source.Reply(HOST_SET_VHOST_ERROR);
+			return;
+		}
+		if (!user.empty() && !IRCD->IsIdentValid(user))
+		{
+			source.Reply(HOST_SET_VIDENT_ERROR);
+			return;
+		}
+
+		na->SetVHost(user, host, source.GetNick());
+		SyncAliases(na);
+		FOREACH_MOD(OnSetVHost, (na));
+		this->gs.ReplyF(source, "Your vhost is now set to %s.", na->GetVHostMask().c_str());
+	}
+};
+
 class CommandGroupServAccess final
 	: public Command
 {
@@ -873,6 +1011,7 @@ class GroupServ final
 	CommandGroupServJoin cmd_join;
 	CommandGroupServInvite cmd_invite;
 	CommandGroupServListChans cmd_listchans;
+	CommandGroupServVHost cmd_vhost;
 	CommandGroupServAccess cmd_access;
 	CommandGroupServFlags cmd_flags;
 	CommandGroupServFlags cmd_fflags;
@@ -910,6 +1049,7 @@ public:
 		, cmd_join(this, core)
 		, cmd_invite(this, core)
 		, cmd_listchans(this, core)
+		, cmd_vhost(this, core)
 		, cmd_access(this, core)
 		, cmd_flags(this, core, "groupserv/flags", false)
 		, cmd_fflags(this, core, "groupserv/fflags", true)

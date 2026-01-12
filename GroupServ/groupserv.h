@@ -66,8 +66,8 @@ enum class GSAccessFlags : unsigned int
 	INVITE = 1 << 7,    // Atheme: +i
 	BAN = 1 << 8,       // Atheme: +b
 
-	ALL = (FOUNDER | FLAGS | ACLVIEW | MEMO | CHANACCESS | VHOST | SET | INVITE | BAN),
-	ALL_NOFOUNDER = (FLAGS | ACLVIEW | MEMO | CHANACCESS | VHOST | SET | INVITE | BAN),
+	ALL = (FOUNDER | FLAGS | ACLVIEW | MEMO | CHANACCESS | VHOST | SET | INVITE),
+	ALL_NOFOUNDER = (FLAGS | ACLVIEW | MEMO | CHANACCESS | VHOST | SET | INVITE),
 };
 
 inline GSAccessFlags operator|(GSAccessFlags a, GSAccessFlags b)
@@ -101,6 +101,7 @@ struct GSGroupRecord final
 	Anope::string url;
 	Anope::string email;
 	Anope::string channel;
+	Anope::string vhost;
 
 	GSAccessFlags joinflags = GSAccessFlags::NONE;
 
@@ -186,6 +187,8 @@ public:
 
 	bool SetOption(CommandSource& source, const Anope::string& groupname, const Anope::string& setting, const Anope::string& value);
 	bool SetGroupFlag(CommandSource& source, const Anope::string& groupname, GSGroupFlags flag, bool enabled);
+
+	bool GetGroupVHost(const Anope::string& groupname, Anope::string& out) const;
 
 	void SaveDB();
 	void LoadDB();

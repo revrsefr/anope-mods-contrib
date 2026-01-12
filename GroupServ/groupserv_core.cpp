@@ -15,6 +15,8 @@
 
 #include "groupserv.h"
 
+#include "language.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdarg>
@@ -44,6 +46,55 @@ namespace
 			out = 0;
 			return false;
 		}
+	}
+
+	bool ParseHostMask(const Anope::string& rawhostmask, Anope::string& user, Anope::string& host)
+	{
+		Anope::string raw = rawhostmask;
+		raw.trim();
+		if (raw.empty())
+			return false;
+		if (raw.find(' ') != Anope::string::npos)
+			return false;
+
+		size_t a = raw.find('@');
+		if (a == Anope::string::npos)
+			host = raw;
+		else
+		{
+			user = raw.substr(0, a);
+			host = raw.substr(a + 1);
+		}
+		return !host.empty();
+	}
+
+	bool ValidateHostMask(CommandSource& source, const Anope::string& user, const Anope::string& host)
+	{
+		if (!user.empty())
+		{
+			if (!IRCD->CanSetVIdent)
+			{
+				source.Reply(HOST_NO_VIDENT);
+				return false;
+			}
+			if (!IRCD->IsIdentValid(user))
+			{
+				source.Reply(HOST_SET_VIDENT_ERROR);
+				return false;
+			}
+		}
+
+		if (host.length() > IRCD->MaxHost)
+		{
+			source.Reply(HOST_SET_VHOST_TOO_LONG, IRCD->MaxHost);
+			return false;
+		}
+		if (!IRCD->IsHostValid(host))
+		{
+			source.Reply(HOST_SET_VHOST_ERROR);
+			return false;
+		}
+		return true;
 	}
 }
 
@@ -276,7 +327,9 @@ GSAccessFlags GroupServCore::GetAccessFor(const GSGroupRecord& g, const NickCore
 bool GroupServCore::HasAccess(const GSGroupRecord& g, const NickCore* nc, GSAccessFlags required) const
 {
 	const auto flags = this->GetAccessFor(g, nc);
-	if (HasFlag(flags, GSAccessFlags::BAN))
+	// A group ban should block access, but a founder should never be locked out
+	// by an accidental +b (older versions implied +b when +F was set).
+	if (HasFlag(flags, GSAccessFlags::BAN) && !HasFlag(flags, GSAccessFlags::FOUNDER))
 		return false;
 	return (static_cast<unsigned int>(flags) & static_cast<unsigned int>(required)) == static_cast<unsigned int>(required);
 }
@@ -753,6 +806,8 @@ void GroupServCore::LoadDB()
 				g.email = val;
 			else if (field.equals_ci("channel"))
 				g.channel = val;
+			else if (field.equals_ci("vhost"))
+				g.vhost = val;
 			else if (field.equals_ci("joinflags"))
 				joinflags_tmp[gkey] = val;
 			else if (field.equals_ci("access") && parts.size() >= 5)
@@ -895,6 +950,7 @@ void GroupServCore::SaveDB()
 		out << "group." << gkey << ".url=" << EscapeValue(g.url) << "\n";
 		out << "group." << gkey << ".email=" << EscapeValue(g.email) << "\n";
 		out << "group." << gkey << ".channel=" << EscapeValue(g.channel) << "\n";
+		out << "group." << gkey << ".vhost=" << EscapeValue(g.vhost) << "\n";
 		out << "group." << gkey << ".joinflags=" << EscapeValue(this->FlagsToString(g.joinflags)) << "\n";
 
 		std::vector<std::pair<Anope::string, GSAccessFlags>> a;
@@ -1114,7 +1170,8 @@ bool GroupServCore::ShowInfo(CommandSource& source, const Anope::string& groupna
 
 	NickCore* nc = source.GetAccount();
 	const auto access = this->GetAccessFor(*g, nc);
-	const bool allowed = this->IsAuspex(source) || HasFlag(g->flags, GSGroupFlags::PUBLIC) || (nc && access != GSAccessFlags::NONE && !HasFlag(access, GSAccessFlags::BAN));
+	const bool allowed = this->IsAuspex(source) || HasFlag(g->flags, GSGroupFlags::PUBLIC)
+		|| (nc && access != GSAccessFlags::NONE && (!HasFlag(access, GSAccessFlags::BAN) || HasFlag(access, GSAccessFlags::FOUNDER)));
 	if (!allowed)
 	{
 		this->Reply(source, "Access denied.");
@@ -1147,12 +1204,24 @@ bool GroupServCore::ShowInfo(CommandSource& source, const Anope::string& groupna
 		this->ReplyF(source, "URL: %s", g->url.c_str());
 	if (!g->email.empty())
 		this->ReplyF(source, "Email: %s", g->email.c_str());
+	if (!g->vhost.empty())
+		this->ReplyF(source, "VHost: %s", g->vhost.c_str());
 
 	if (g->joinflags != GSAccessFlags::NONE)
 		this->ReplyF(source, "Join flags: +%s", this->FlagsToString(g->joinflags).c_str());
 
 	this->ReplyF(source, "Access entries: %u", static_cast<unsigned int>(g->access.size()));
 	this->Reply(source, "*** End of Info ***");
+	return true;
+}
+
+bool GroupServCore::GetGroupVHost(const Anope::string& groupname, Anope::string& out) const
+{
+	out.clear();
+	auto it = this->groups.find(NormalizeKey(groupname));
+	if (it == this->groups.end())
+		return false;
+	out = it->second.vhost;
 	return true;
 }
 
@@ -1604,6 +1673,42 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 			g->joinflags = GSAccessFlags::ALL_NOFOUNDER;
 		this->SaveDB();
 		this->ReplyF(source, "Join flags of %s set to %s.", g->name.c_str(), v.c_str());
+		return true;
+	}
+	if (up == "VHOST")
+	{
+		Anope::string v = value;
+		v.trim();
+		if (v.empty())
+		{
+			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>");
+			return false;
+		}
+		if (v.equals_ci("OFF") || v.equals_ci("NONE"))
+		{
+			g->vhost.clear();
+			this->SaveDB();
+			this->ReplyF(source, "VHost for %s cleared.", g->name.c_str());
+			return true;
+		}
+
+		Anope::string user, host;
+		if (!ParseHostMask(v, user, host))
+		{
+			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>");
+			return false;
+		}
+		if (!IRCD || !IRCD->CanSetVHost)
+		{
+			this->Reply(source, "Your IRCd does not support vhosts.");
+			return false;
+		}
+		if (!ValidateHostMask(source, user, host))
+			return false;
+
+		g->vhost = (!user.empty() ? user + "@" : "") + host;
+		this->SaveDB();
+		this->ReplyF(source, "VHost for %s set to %s.", g->name.c_str(), g->vhost.c_str());
 		return true;
 	}
 	if (up == "OPEN")
