@@ -384,21 +384,45 @@ GSAccessFlags GroupServCore::ParseFlags(const Anope::string& flagstring, bool al
 	if (tokens.empty() && !flagstring.empty())
 		tokens.push_back(flagstring);
 
-	auto apply_one = [&](const Anope::string& up, char dir) {
+	auto apply_one = [&](const Anope::string& token, char dir) {
 		GSAccessFlags bit = GSAccessFlags::NONE;
-		// Atheme letters (case-insensitive), plus some older aliases for compatibility.
-		if (up == "*" || up == "ALL") bit = GSAccessFlags::ALL;
-		else if (up == "F" || up == "FOUNDER") bit = GSAccessFlags::FOUNDER;
-		else if (up == "f" || up == "FLAGS" || up == "MANAGE" || up == "M") bit = GSAccessFlags::FLAGS;
-		else if (up == "A" || up == "ACLVIEW" || up == "VIEW" || up == "V") bit = GSAccessFlags::ACLVIEW;
-		else if (up == "m" || up == "MEMO") bit = GSAccessFlags::MEMO;
-		else if (up == "c" || up == "CHAN" || up == "CHANACCESS") bit = GSAccessFlags::CHANACCESS;
-		else if (up == "v" || up == "VHOST") bit = GSAccessFlags::VHOST;
-		else if (up == "s" || up == "SET") bit = GSAccessFlags::SET;
-		else if (up == "i" || up == "INVITE" || up == "I") bit = GSAccessFlags::INVITE;
-		else if (up == "b" || up == "BAN" || up == "B") bit = GSAccessFlags::BAN;
+
+		// Single-letter flags are case-sensitive (Atheme style):
+		// +F founder, +f manage ACL, +A view ACL, +m memo, +c chanaccess, +v vhost, +s set, +b ban, +i invite
+		if (token.length() == 1)
+		{
+			const char ch = token[0];
+			switch (ch)
+			{
+				case '*': bit = GSAccessFlags::ALL; break;
+				case 'F': bit = GSAccessFlags::FOUNDER; break;
+				case 'f': bit = GSAccessFlags::FLAGS; break;
+				case 'A': bit = GSAccessFlags::ACLVIEW; break;
+				case 'm': bit = GSAccessFlags::MEMO; break;
+				case 'c': bit = GSAccessFlags::CHANACCESS; break;
+				case 'v': bit = GSAccessFlags::VHOST; break;
+				case 's': bit = GSAccessFlags::SET; break;
+				case 'i': bit = GSAccessFlags::INVITE; break;
+				case 'b': bit = GSAccessFlags::BAN; break;
+				default: return false;
+			}
+		}
 		else
-			return false;
+		{
+			const Anope::string u = token.upper();
+			// Long names are case-insensitive.
+			if (u == "ALL") bit = GSAccessFlags::ALL;
+			else if (u == "FOUNDER") bit = GSAccessFlags::FOUNDER;
+			else if (u == "FLAGS" || u == "MANAGE") bit = GSAccessFlags::FLAGS;
+			else if (u == "ACLVIEW" || u == "VIEW") bit = GSAccessFlags::ACLVIEW;
+			else if (u == "MEMO") bit = GSAccessFlags::MEMO;
+			else if (u == "CHAN" || u == "CHANACCESS") bit = GSAccessFlags::CHANACCESS;
+			else if (u == "VHOST") bit = GSAccessFlags::VHOST;
+			else if (u == "SET") bit = GSAccessFlags::SET;
+			else if (u == "INVITE") bit = GSAccessFlags::INVITE;
+			else if (u == "BAN") bit = GSAccessFlags::BAN;
+			else return false;
+		}
 
 		if (dir == '-')
 			flags = static_cast<GSAccessFlags>(static_cast<unsigned int>(flags) & ~static_cast<unsigned int>(bit));
@@ -434,16 +458,14 @@ GSAccessFlags GroupServCore::ParseFlags(const Anope::string& flagstring, bool al
 			continue;
 		}
 
-		Anope::string up = token;
-		if (apply_one(up, dir))
+		if (apply_one(token, dir))
 			continue;
 
 		// Support compact Atheme-style strings like +VI or -MS.
-		Anope::string up2 = token.upper();
-		if (up2.length() > 1)
+		if (token.length() > 1)
 		{
 			bool any = false;
-			for (const auto ch : up2)
+			for (const auto ch : token)
 			{
 				if (!isalpha(static_cast<unsigned char>(ch)))
 					continue;
@@ -1247,37 +1269,39 @@ void GroupServCore::GetGroupsForAccount(const NickCore* nc, std::vector<Anope::s
 
 bool GroupServCore::ListGroups(CommandSource& source, const Anope::string& pattern)
 {
-	if (!this->IsAuspex(source))
+	if (!source.GetAccount())
 	{
-		this->Reply(source, "Access denied.");
-		return false;
-	}
-	if (pattern.empty())
-	{
-		this->Reply(source, "Syntax: LIST <pattern>");
+		this->Reply(source, "You must be identified to use LIST.");
 		return false;
 	}
 
+	const bool can_see_private = this->IsAuspex(source);
+	const Anope::string effective_pattern = pattern.empty() ? "!*" : pattern;
+
 	unsigned int matches = 0;
-	this->ReplyF(source, "Groups matching pattern %s:", pattern.c_str());
+	this->ReplyF(source, "Groups matching pattern %s:", effective_pattern.c_str());
 
 	std::vector<Anope::string> names;
 	names.reserve(this->groups.size());
 	for (const auto& [_, g] : this->groups)
+	{
+		if (!can_see_private && !HasFlag(g.flags, GSGroupFlags::PUBLIC))
+			continue;
 		names.push_back(g.name);
+	}
 	std::sort(names.begin(), names.end());
 	for (const auto& name : names)
 	{
-		if (!Anope::Match(name, pattern))
+		if (!Anope::Match(name, effective_pattern))
 			continue;
 		this->ReplyF(source, "- %s", name.c_str());
 		++matches;
 	}
 
 	if (!matches)
-		this->ReplyF(source, "No groups matched pattern %s", pattern.c_str());
+		this->ReplyF(source, "No groups matched pattern %s", effective_pattern.c_str());
 	else
-		this->ReplyF(source, "%u match(es) for pattern %s", matches, pattern.c_str());
+		this->ReplyF(source, "%u match(es) for pattern %s", matches, effective_pattern.c_str());
 	return true;
 }
 

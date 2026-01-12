@@ -48,8 +48,8 @@
  *
  *   # Default flags granted when a user JOINs an open group.
  *   # These are GroupServ access flags (NOT IRC user modes).
- *   # Accepts: +V +I, +ACLVIEW +INVITE, or compact +VI.
- *   default_joinflags = "+V"
+ *   # Accepts: +A +i, +ACLVIEW +INVITE, or compact +Ai.
+ *   default_joinflags = "+A"
  *
  *   # Auto-save interval in seconds (0 disables periodic autosave)
  *   save_interval = 600
@@ -471,22 +471,22 @@ class CommandGroupServList final
 
 public:
 	CommandGroupServList(Module* creator, GroupServCore& core)
-		: Command(creator, "groupserv/list", 1, 1)
+		: Command(creator, "groupserv/list", 0, 1)
 		, gs(core)
 	{
 		this->SetDesc(_("List groups."));
-		this->SetSyntax(_("<pattern>"));
+		this->SetSyntax(_("[pattern]"));
 		this->AllowUnregistered(true);
 	}
 
 	void OnSyntaxError(CommandSource& source, const Anope::string&) override
 	{
-		ReplySyntaxAndMoreInfo(this->gs, source, _("<pattern>"));
+		ReplySyntaxAndMoreInfo(this->gs, source, _("[pattern]"));
 	}
 
 	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
 	{
-		this->gs.ListGroups(source, params[0]);
+		this->gs.ListGroups(source, params.empty() ? "" : params[0]);
 	}
 };
 
