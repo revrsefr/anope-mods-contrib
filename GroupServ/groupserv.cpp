@@ -74,12 +74,71 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
 
 namespace
 {
 	bool HasChanServSetAccess(CommandSource& source, ChannelInfo* ci)
 	{
 		return (ci && (source.AccessFor(ci).HasPriv("SET") || source.HasPriv("chanserv/administration")));
+	}
+
+	bool IsGroupTargetMask(const Anope::string& mask)
+	{
+		if (mask.empty() || mask[0] != '!')
+			return false;
+		// Avoid treating hostmasks as groups.
+		if (mask.find_first_of("*@?") != Anope::string::npos)
+			return false;
+		if (mask.find('@') != Anope::string::npos)
+			return false;
+		// Avoid treating channels as groups.
+		if (IRCD->IsChannelValid(mask))
+			return false;
+		return true;
+	}
+
+	bool GroupGrantsChanPrivRecurse(GroupServCore& gs, const NickCore* nc, const ChannelInfo* ci, const Anope::string& priv,
+		unsigned depth, std::set<const ChannelInfo*>& seen)
+	{
+		if (!ci || !nc)
+			return false;
+		if (depth > ChanAccess::MAX_DEPTH)
+			return false;
+		if (seen.count(ci))
+			return false;
+		seen.insert(ci);
+
+		for (unsigned i = 0; i < ci->GetAccessCount(); ++i)
+		{
+			ChanAccess* a = ci->GetAccess(i);
+			if (!a)
+				continue;
+
+			const auto& mask = a->Mask();
+			if (IsGroupTargetMask(mask) && gs.DoesGroupExist(mask) && gs.HasGroupAccess(mask, nc, GSAccessFlags::CHANACCESS))
+			{
+				if (a->HasPriv(priv))
+					return true;
+			}
+
+			if (IRCD->IsChannelValid(mask))
+			{
+				ChannelInfo* next = ChannelInfo::Find(mask);
+				if (GroupGrantsChanPrivRecurse(gs, nc, next, priv, depth + 1, seen))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool GroupGrantsChanPriv(GroupServCore& gs, const AccessGroup* group, const Anope::string& priv)
+	{
+		if (!group || !group->ci || !group->nc)
+			return false;
+		std::set<const ChannelInfo*> seen;
+		return GroupGrantsChanPrivRecurse(gs, group->nc, group->ci, priv, 0, seen);
 	}
 }
 
@@ -489,6 +548,91 @@ public:
 	}
 };
 
+class CommandGroupServAccess final
+	: public Command
+{
+	GroupServCore& gs;
+
+public:
+	CommandGroupServAccess(Module* creator, GroupServCore& core)
+		: Command(creator, "groupserv/access", 2, 3)
+		, gs(core)
+	{
+		this->SetDesc(_("Show or diagnose group channel access (+c)"));
+		this->SetSyntax(_("<!group> \037#channel\037 [\037priv\037]"));
+		this->AllowUnregistered(true);
+	}
+
+	void OnSyntaxError(CommandSource& source, const Anope::string&) override
+	{
+		ReplySyntaxAndMoreInfo(this->gs, source, _("<!group> \037#channel\037 [\037priv\037]"));
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		if (!source.GetAccount())
+		{
+			this->gs.Reply(source, "You must be identified to use ACCESS.");
+			return;
+		}
+
+		const auto& groupname = params[0];
+		ChannelInfo* ci = ChannelInfo::Find(params[1]);
+		if (!ci)
+		{
+			source.Reply(CHAN_X_NOT_REGISTERED, params[1].c_str());
+			return;
+		}
+
+		if (!this->gs.DoesGroupExist(groupname))
+		{
+			this->gs.ReplyF(source, "Group %s does not exist.", groupname.c_str());
+			return;
+		}
+
+		if (!this->gs.HasGroupAccess(groupname, source.GetAccount(), GSAccessFlags::CHANACCESS) && !this->gs.IsAuspex(source))
+		{
+			this->gs.Reply(source, ACCESS_DENIED);
+			return;
+		}
+
+		std::vector<ChanAccess*> matches;
+		for (unsigned i = 0; i < ci->GetAccessCount(); ++i)
+		{
+			ChanAccess* a = ci->GetAccess(i);
+			if (a && a->Mask().equals_ci(groupname))
+				matches.push_back(a);
+		}
+
+		if (matches.empty())
+		{
+			this->gs.ReplyF(source, "No ChanServ access entry for %s exists on %s.", groupname.c_str(), ci->name.c_str());
+			this->gs.Reply(source, "Add one with: /msg ChanServ FLAGS \037#channel\037 \037!group\037 +<flags>  (or: /msg ChanServ ACCESS \037#channel\037 ADD \037!group\037 <level>)");
+			return;
+		}
+
+		this->gs.ReplyF(source, "ChanServ access entries on %s for %s:", ci->name.c_str(), groupname.c_str());
+		for (auto* a : matches)
+		{
+			this->gs.ReplyF(source, "- provider=%s data=%s", a->provider ? a->provider->name.c_str() : "(none)", a->AccessSerialize().c_str());
+		}
+
+		this->gs.Reply(source, "Note: these entries apply only to members with GroupServ flag +c in the group.");
+
+		if (params.size() >= 3)
+		{
+			const auto priv = params[2];
+			bool via_group = false;
+			for (auto* a : matches)
+				if (a->HasPriv(priv))
+					via_group = true;
+
+			this->gs.ReplyF(source, "Privilege %s via %s: %s", priv.c_str(), groupname.c_str(), via_group ? "YES" : "NO");
+			this->gs.ReplyF(source, "Effective privilege %s on %s (all sources): %s", priv.c_str(), ci->name.c_str(), source.AccessFor(ci).HasPriv(priv) ? "YES" : "NO");
+		}
+	}
+};
+
 class CommandGroupServFlags final
 	: public Command
 {
@@ -729,6 +873,7 @@ class GroupServ final
 	CommandGroupServJoin cmd_join;
 	CommandGroupServInvite cmd_invite;
 	CommandGroupServListChans cmd_listchans;
+	CommandGroupServAccess cmd_access;
 	CommandGroupServFlags cmd_flags;
 	CommandGroupServFlags cmd_fflags;
 	CommandGroupServSet cmd_set;
@@ -753,7 +898,7 @@ public:
 	GroupServ(const Anope::string& modname, const Anope::string& creator)
 		: Module(modname, creator, VENDOR)
 		, core(this)
-		, chanaccess(this, "groupserv:chanaccess")
+		, chanaccess(this, "groupserv/chanaccess")
 		, chanaccess_type(chanaccess)
 		, cmd_cs_set_group(this, core, chanaccess)
 		, cmd_cs_set_grouponly(this, core, chanaccess)
@@ -765,6 +910,7 @@ public:
 		, cmd_join(this, core)
 		, cmd_invite(this, core)
 		, cmd_listchans(this, core)
+		, cmd_access(this, core)
 		, cmd_flags(this, core, "groupserv/flags", false)
 		, cmd_fflags(this, core, "groupserv/fflags", true)
 		, cmd_set(this, core)
@@ -776,6 +922,13 @@ public:
 		, cmd_ms_gdel(this, core)
 	{
 		this->core.SetChanAccessItem(&this->chanaccess);
+	}
+
+	EventReturn OnGroupCheckPriv(const AccessGroup* group, const Anope::string& priv) override
+	{
+		if (GroupGrantsChanPriv(this->core, group, priv))
+			return EVENT_ALLOW;
+		return EVENT_CONTINUE;
 	}
 
 	~GroupServ() override

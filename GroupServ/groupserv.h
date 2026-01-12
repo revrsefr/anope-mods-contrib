@@ -160,6 +160,7 @@ public:
 
 	bool DoesGroupExist(const Anope::string& groupname) const;
 	bool IsMemberOfGroup(const Anope::string& groupname, const NickCore* nc) const;
+	bool HasGroupAccess(const Anope::string& groupname, const NickCore* nc, GSAccessFlags required) const;
 	void SetChanAccessItem(ExtensibleItem<GSChanAccessData>* item);
 
 	bool IsAdmin(CommandSource& source) const;

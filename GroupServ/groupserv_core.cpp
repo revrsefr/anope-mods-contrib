@@ -107,6 +107,19 @@ bool GroupServCore::IsMemberOfGroup(const Anope::string& groupname, const NickCo
 	return true;
 }
 
+bool GroupServCore::HasGroupAccess(const Anope::string& groupname, const NickCore* nc, GSAccessFlags required) const
+{
+	if (!nc)
+		return false;
+
+	const auto key = NormalizeKey(groupname);
+	auto it = this->groups.find(key);
+	if (it == this->groups.end())
+		return false;
+
+	return this->HasAccess(it->second, nc, required);
+}
+
 void GroupServCore::SetChanAccessItem(ExtensibleItem<GSChanAccessData>* item)
 {
 	this->chanaccess_item = item;

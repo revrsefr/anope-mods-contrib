@@ -73,6 +73,29 @@ GroupServ can associate a registered channel with a group and (optionally) enfor
 
 Important: Anope does not provide a true “pre-join deny” hook for this, so the behavior is “join then kick” (Atheme-like in practice).
 
+### Channel access inheritance (+c)
+
+GroupServ can optionally let group members **inherit ChanServ privileges** from a channel access entry that targets the group.
+
+How it works:
+
+- Add a ChanServ access entry for the group on the channel (mask must be exactly the group name, e.g. `!devs`).
+- Give a group member the GroupServ flag `+c` (CHANACCESS).
+- When ChanServ checks whether the user has a privilege on that channel, GroupServ will allow it **if the privilege is granted by a `!group` entry**.
+
+Example setup:
+
+- Give the group access on the channel:
+  - `/msg ChanServ FLAGS #dev !devs +o` (example)
+  - or `/msg ChanServ ACCESS #dev ADD !devs <level>`
+- Let a member inherit it:
+  - `/msg GroupServ FLAGS !devs Alice +c`
+
+Notes:
+
+- `+c` does not auto-op people by itself; it just makes ChanServ privilege checks succeed when the channel’s access list grants the group those privileges.
+- This only applies for accounts which are members of the group *and* have GroupServ flag `+c` in that group.
+
 ### Public
 
 - `HELP`
@@ -81,6 +104,13 @@ Important: Anope does not provide a true “pre-join deny” hook for this, so t
 - `LISTCHANS <!group>`
   - Lists registered channels explicitly associated with the group via `ChanServ SET #channel GROUP`.
   - Example: `/msg GroupServ LISTCHANS !devs`
+
+- `ACCESS <!group> #channel [priv]`
+  - Shows (and optionally diagnoses) ChanServ access entries on `#channel` which target `!group`.
+  - With `priv`, it will also say whether the `!group` entry grants that privilege and whether you effectively have it (from all sources).
+  - Examples:
+    - `/msg GroupServ ACCESS !devs #dev`
+    - `/msg GroupServ ACCESS !devs #dev INVITE`
 
 - `REGISTER <!group>`
   - Creates a group and makes your account the founder.
