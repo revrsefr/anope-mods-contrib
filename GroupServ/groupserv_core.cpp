@@ -30,6 +30,7 @@ namespace
 	constexpr const char* LEGACY_DB_MAGIC = "groupserv";
 	constexpr uint64_t DB_VERSION = 1;
 	constexpr time_t INVITE_TTL = 7 * 24 * 60 * 60; // 7 days
+	constexpr time_t DROP_CHALLENGE_TTL = 30 * 60; // 30 minutes
 
 	bool ParseU64(const Anope::string& in, uint64_t& out)
 	{
@@ -57,6 +58,27 @@ GroupServCore::~GroupServCore()
 {
 	if (this->initialized)
 		this->SaveDB();
+}
+
+void GroupServCore::PurgeExpiredState()
+{
+	// Expired invites should not remain in memory forever.
+	for (auto it = this->invites.begin(); it != this->invites.end();)
+	{
+		if (it->second.expires && it->second.expires < Anope::CurTime)
+			it = this->invites.erase(it);
+		else
+			++it;
+	}
+
+	// Drop challenges are transient; keep the map bounded.
+	for (auto it = this->drop_challenges.begin(); it != this->drop_challenges.end();)
+	{
+		if (it->second.created && (it->second.created + DROP_CHALLENGE_TTL) < Anope::CurTime)
+			it = this->drop_challenges.erase(it);
+		else
+			++it;
+	}
 }
 
 bool GroupServCore::DoesGroupExist(const Anope::string& groupname) const
@@ -538,6 +560,7 @@ void GroupServCore::LoadDB()
 {
 	std::map<Anope::string, GSGroupRecord> new_groups;
 	std::map<Anope::string, GSInvite> new_invites;
+	std::map<Anope::string, Anope::string> joinflags_tmp; // groupkey -> raw joinflags string
 
 	const auto path = this->GetDBPath();
 	std::ifstream in(path.c_str());
@@ -589,8 +612,8 @@ void GroupServCore::LoadDB()
 				g.url = UnescapeValue(parts[5]);
 				g.email = UnescapeValue(parts[6]);
 				g.channel = UnescapeValue(parts[7]);
-				g.joinflags_raw = UnescapeValue(parts[8]);
-				g.joinflags = this->ParseFlags(g.joinflags_raw, false, GSAccessFlags::NONE);
+				const auto joinflags_raw = UnescapeValue(parts[8]);
+				g.joinflags = this->ParseFlags(joinflags_raw, false, GSAccessFlags::NONE);
 				new_groups.emplace(NormalizeKey(g.name), g);
 			}
 			else if (type.equals_ci("A"))
@@ -644,6 +667,7 @@ void GroupServCore::LoadDB()
 					load_legacy();
 					this->groups.swap(new_groups);
 					this->invites.swap(new_invites);
+					this->PurgeExpiredState();
 					return;
 				}
 			}
@@ -715,7 +739,7 @@ void GroupServCore::LoadDB()
 			else if (field.equals_ci("channel"))
 				g.channel = val;
 			else if (field.equals_ci("joinflags"))
-				g.joinflags_raw = val;
+				joinflags_tmp[gkey] = val;
 			else if (field.equals_ci("access") && parts.size() >= 5)
 			{
 				uint64_t idx = 0;
@@ -755,7 +779,8 @@ void GroupServCore::LoadDB()
 	{
 		if (g.name.empty())
 			g.name = gkey;
-		g.joinflags = this->ParseFlags(g.joinflags_raw, false, GSAccessFlags::NONE);
+		const auto it = joinflags_tmp.find(gkey);
+		g.joinflags = this->ParseFlags(it != joinflags_tmp.end() ? it->second : Anope::string(), false, GSAccessFlags::NONE);
 		g.access.clear();
 
 		auto ait = access_tmp.find(gkey);
@@ -782,14 +807,17 @@ void GroupServCore::LoadDB()
 
 	this->groups.swap(new_groups);
 	this->invites.swap(new_invites);
+	this->PurgeExpiredState();
 }
 
-void GroupServCore::SaveDB() const
+void GroupServCore::SaveDB()
 {
 	if (!this->initialized)
 		return;
 	if (Anope::ReadOnly)
 		return;
+
+	this->PurgeExpiredState();
 
 	const auto path = this->GetDBPath();
 	const auto tmp = path + ".tmp";
@@ -821,7 +849,7 @@ void GroupServCore::SaveDB() const
 		out << "group." << gkey << ".url=" << EscapeValue(g.url) << "\n";
 		out << "group." << gkey << ".email=" << EscapeValue(g.email) << "\n";
 		out << "group." << gkey << ".channel=" << EscapeValue(g.channel) << "\n";
-		out << "group." << gkey << ".joinflags=" << EscapeValue(g.joinflags_raw) << "\n";
+		out << "group." << gkey << ".joinflags=" << EscapeValue(this->FlagsToString(g.joinflags)) << "\n";
 
 		std::vector<std::pair<Anope::string, GSAccessFlags>> a;
 		a.reserve(g.access.size());
@@ -843,8 +871,6 @@ void GroupServCore::SaveDB() const
 	std::sort(invs.begin(), invs.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 	for (const auto& [acct, inv] : invs)
 	{
-		if (inv.expires && inv.expires < Anope::CurTime)
-			continue;
 		out << "invite." << invite_idx << ".account=" << EscapeValue(acct) << "\n";
 		out << "invite." << invite_idx << ".group=" << EscapeValue(inv.group) << "\n";
 		out << "invite." << invite_idx << ".created=" << static_cast<uint64_t>(inv.created) << "\n";
@@ -896,8 +922,7 @@ void GroupServCore::OnReload(Configuration::Conf& conf)
 	this->maxgroupacs = mod->Get<unsigned int>("maxgroupacs", "0");
 	this->enable_open_groups = mod->Get<bool>("enable_open_groups", "yes");
 
-	this->default_joinflags_raw = mod->Get<Anope::string>("default_joinflags", "");
-	this->default_joinflags = this->ParseFlags(this->default_joinflags_raw, false, GSAccessFlags::NONE);
+	this->default_joinflags = this->ParseFlags(mod->Get<Anope::string>("default_joinflags", ""), false, GSAccessFlags::NONE);
 	// Atheme default: JOIN grants no privileges unless joinflags are configured.
 
 	this->save_interval = mod->Get<time_t>("save_interval", "600");
@@ -943,7 +968,6 @@ bool GroupServCore::RegisterGroup(CommandSource& source, const Anope::string& gr
 	g.name = groupname;
 	g.regtime = Anope::CurTime;
 	g.flags = GSGroupFlags::NONE;
-	g.joinflags_raw.clear();
 	g.joinflags = GSAccessFlags::NONE;
 	g.access.clear();
 
@@ -989,14 +1013,19 @@ bool GroupServCore::DropGroup(CommandSource& source, const Anope::string& groupn
 		if (key.empty())
 		{
 			const auto token = Anope::Random(12);
-			this->drop_challenges[chal_key] = token;
+			this->drop_challenges[chal_key] = { token, Anope::CurTime };
 			this->ReplyF(source, "This will DESTROY the group %s.", g->name.c_str());
 			this->ReplyF(source, "To confirm: /msg %s DROP %s %s", this->groupserv ? this->groupserv->nick.c_str() : "GroupServ", g->name.c_str(), token.c_str());
 			return false;
 		}
 
 		auto it = this->drop_challenges.find(chal_key);
-		if (it == this->drop_challenges.end() || it->second != key)
+		if (it != this->drop_challenges.end() && it->second.created && (it->second.created + DROP_CHALLENGE_TTL) < Anope::CurTime)
+		{
+			this->drop_challenges.erase(it);
+			it = this->drop_challenges.end();
+		}
+		if (it == this->drop_challenges.end() || it->second.token != key)
 		{
 			this->Reply(source, "Invalid key for DROP.");
 			return false;
@@ -1064,8 +1093,8 @@ bool GroupServCore::ShowInfo(CommandSource& source, const Anope::string& groupna
 	if (!g->email.empty())
 		this->ReplyF(source, "Email: %s", g->email.c_str());
 
-	if (!g->joinflags_raw.empty())
-		this->ReplyF(source, "Join flags: %s", g->joinflags_raw.c_str());
+	if (g->joinflags != GSAccessFlags::NONE)
+		this->ReplyF(source, "Join flags: +%s", this->FlagsToString(g->joinflags).c_str());
 
 	this->ReplyF(source, "Access entries: %u", static_cast<unsigned int>(g->access.size()));
 	this->Reply(source, "*** End of Info ***");
@@ -1504,7 +1533,6 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 		v.trim();
 		if (v.empty() || v.equals_ci("OFF") || v.equals_ci("NONE"))
 		{
-			g->joinflags_raw.clear();
 			g->joinflags = GSAccessFlags::NONE;
 			this->SaveDB();
 			this->ReplyF(source, "The group-specific join flags for %s have been cleared.", g->name.c_str());
@@ -1515,7 +1543,6 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 			this->Reply(source, "You can't set join flags to be removed.");
 			return false;
 		}
-		g->joinflags_raw = v;
 		g->joinflags = this->ParseFlags(v, false, GSAccessFlags::NONE);
 		// Atheme behavior: if invalid, JOINFLAGS becomes "+" (all except founder).
 		if (g->joinflags == GSAccessFlags::NONE)

@@ -102,7 +102,6 @@ struct GSGroupRecord final
 	Anope::string email;
 	Anope::string channel;
 
-	Anope::string joinflags_raw;
 	GSAccessFlags joinflags = GSAccessFlags::NONE;
 
 	// account (lowercased) -> flags
@@ -114,6 +113,12 @@ struct GSInvite final
 	Anope::string group;
 	time_t created = 0;
 	time_t expires = 0;
+};
+
+struct GSDropChallenge final
+{
+	Anope::string token;
+	time_t created = 0;
 };
 
 struct GSChanAccessData final
@@ -167,7 +172,7 @@ public:
 	bool SetOption(CommandSource& source, const Anope::string& groupname, const Anope::string& setting, const Anope::string& value);
 	bool SetGroupFlag(CommandSource& source, const Anope::string& groupname, GSGroupFlags flag, bool enabled);
 
-	void SaveDB() const;
+	void SaveDB();
 	void LoadDB();
 	time_t GetSaveInterval() const { return this->save_interval; }
 
@@ -187,13 +192,12 @@ private:
 	unsigned int maxgroupacs = 0;
 	bool enable_open_groups = true;
 	GSAccessFlags default_joinflags = GSAccessFlags::NONE;
-	Anope::string default_joinflags_raw;
 	
 	time_t save_interval = 600;
 
 	std::map<Anope::string, GSGroupRecord> groups; // key = lowercased name
 	std::map<Anope::string, GSInvite> invites; // key = lowercased account
-	std::map<Anope::string, Anope::string> drop_challenges; // key = lowercased account+"|"+group => token
+	std::map<Anope::string, GSDropChallenge> drop_challenges; // key = lowercased account+"|"+group
 	bool initialized = false;
 
 	Anope::string GetDBPath() const;
@@ -203,6 +207,7 @@ private:
 	static bool IsValidGroupName(const Anope::string& name);
 	static Anope::string NormalizeKey(const Anope::string& s);
 	static Anope::string DropChallengeKey(const Anope::string& account, const Anope::string& group);
+	void PurgeExpiredState();
 
 	GSGroupRecord* FindGroup(const Anope::string& name);
 	GSGroupRecord& GetOrCreateGroup(const Anope::string& name);

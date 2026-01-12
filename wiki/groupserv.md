@@ -192,3 +192,15 @@ Important: Anope does not provide a true “pre-join deny” hook for this, so t
 Group data is stored as a flatfile in the Anope data directory (e.g. `data/groupserv.db`) and written atomically (via `.tmp` then rename).
 
 Channel ↔ group association (and GROUPONLY state) are stored on the registered channel so they persist across restarts and module reloads.
+
+## Memory usage notes
+
+GroupServ keeps in-memory maps for:
+- groups + access lists
+- pending invites
+- pending DROP confirmation challenges
+
+To keep memory usage bounded over time:
+- expired invites are purged
+- DROP challenges expire automatically (TTL) and are purged
+- JOINFLAGS are stored internally as parsed flags (not duplicated raw strings)
