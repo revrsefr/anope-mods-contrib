@@ -202,6 +202,8 @@ In memory it keeps:
 - pending invites (transient; not intended to survive restart)
 - pending DROP confirmation challenges (transient)
 
+Invites and DROP challenges are intentionally not persisted: they are short-lived workflow state, and dropping them on restart avoids stale/forgotten tokens lingering indefinitely.
+
 Keeping this in memory avoids doing slow on-demand disk/DB reads for common operations (including join-time enforcement).
 
 To keep memory usage bounded over time:
