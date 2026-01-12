@@ -1103,6 +1103,27 @@ public:
 		this->core.OnReload(conf);
 		this->RecreateTimers();
 	}
+
+	void OnNickInfo(CommandSource& source, NickAlias* na, InfoFormatter& info, bool show_hidden) override
+	{
+		if (!na || !na->nc)
+			return;
+
+		std::vector<Anope::string> groups;
+		this->core.GetGroupsForAccount(na->nc, groups, show_hidden);
+		if (groups.empty())
+			return;
+
+		std::sort(groups.begin(), groups.end());
+		Anope::string out;
+		for (const auto& g : groups)
+		{
+			if (!out.empty())
+				out += ",";
+			out += g;
+		}
+		info["GroupServ"] = out;
+	}
 };
 
 MODULE_INIT(GroupServ)

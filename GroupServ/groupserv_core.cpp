@@ -1225,6 +1225,26 @@ bool GroupServCore::GetGroupVHost(const Anope::string& groupname, Anope::string&
 	return true;
 }
 
+void GroupServCore::GetGroupsForAccount(const NickCore* nc, std::vector<Anope::string>& out, bool show_hidden) const
+{
+	out.clear();
+	if (!nc)
+		return;
+
+	out.reserve(this->groups.size());
+	for (const auto& [_, g] : this->groups)
+	{
+		const auto flags = this->GetAccessFor(g, nc);
+		if (flags == GSAccessFlags::NONE)
+			continue;
+		if (HasFlag(flags, GSAccessFlags::BAN))
+			continue;
+		if (!show_hidden && !HasFlag(g.flags, GSGroupFlags::PUBLIC))
+			continue;
+		out.push_back(g.name);
+	}
+}
+
 bool GroupServCore::ListGroups(CommandSource& source, const Anope::string& pattern)
 {
 	if (!this->IsAuspex(source))
