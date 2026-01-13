@@ -11,9 +11,9 @@
  * Syntax: TOPICHISTORY channel {LIST | CLEAR | SET entry-num}
  *
  * Configuration to put into your chanserv config:
-module { name = "cs_topichistory"; maxhistory = 3; }
-command { service = "ChanServ"; name = "SET TOPICHISTORY"; command = "chanserv/set/topichistory"; }
-command { service = "ChanServ"; name = "TOPICHISTORY"; command = "chanserv/topichistory"; group = "chanserv/management"; }
+ * module { name = "cs_topichistory"; maxhistory = 3; }
+ * command { service = "ChanServ"; name = "SET TOPICHISTORY"; command = "chanserv/set/topichistory"; }
+ * command { service = "ChanServ"; name = "TOPICHISTORY"; command = "chanserv/topichistory"; group = "chanserv/management"; }
  *
  */
 
@@ -180,7 +180,34 @@ class CommandCSTopicHistory : public Command
 		/* Create a new List and add the current topic, just like when enabling the option */
 		TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 		if ((*entries)->empty())
-			(*entries)->push_back(new TopicHistoryEntry(ci, ci->last_topic, ci->last_topic_setter, ci->last_topic_time));
+		{
+			Anope::string topic;
+			Anope::string setter;
+			time_t when = 0;
+
+			if (ci->c)
+			{
+				topic = ci->c->topic;
+				setter = ci->c->topic_setter;
+				when = ci->c->topic_time;
+			}
+
+			if (topic.empty())
+			{
+				topic = ci->last_topic;
+				setter = ci->last_topic_setter;
+				when = ci->last_topic_time;
+			}
+
+			if (!topic.empty())
+			{
+				if (when == 0)
+					when = Anope::CurTime;
+				if (setter.empty())
+					setter = "unknown";
+				(*entries)->push_back(new TopicHistoryEntry(ci, topic, setter, when));
+			}
+		}
 
 		Log(source.AccessFor(ci).HasPriv("TOPIC") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove all historical topics.";
 		source.Reply("Topic history for \002%s\002 has been cleared.", ci->name.c_str());
@@ -204,7 +231,8 @@ class CommandCSTopicHistory : public Command
 		try
 		{
 			unsigned i = std::stoi(entrynum.str());
-			if (i > 0 && i <= (*entries)->size())
+			// Index 0 is the current topic (hidden); valid history entries are 1..size-1.
+			if (i >= 1 && i < (*entries)->size())
 			{
 				if (ci->c->topic == (*entries)->at(i)->topic)
 				{
@@ -321,10 +349,39 @@ class CommandCSSetTopicHistory : public Command
 			source.Reply("Topic history option for %s is now \002on\002.", ci->name.c_str());
 
 			ci->Extend<bool>("TOPICHISTORY");
-			/* If this channel's topic history list is empty, add the current topic as a starting point. */
+			/* If this channel's topic history list is empty, seed it with the current topic (if any).
+			 * Avoid creating blank/epoch entries when the channel is not in use or has no topic.
+			 */
 			TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 			if ((*entries)->empty())
-				(*entries)->push_back(new TopicHistoryEntry(ci, ci->last_topic, ci->last_topic_setter, ci->last_topic_time));
+			{
+				Anope::string topic;
+				Anope::string setter;
+				time_t when = 0;
+
+				if (ci->c)
+				{
+					topic = ci->c->topic;
+					setter = ci->c->topic_setter;
+					when = ci->c->topic_time;
+				}
+
+				if (topic.empty())
+				{
+					topic = ci->last_topic;
+					setter = ci->last_topic_setter;
+					when = ci->last_topic_time;
+				}
+
+				if (!topic.empty())
+				{
+					if (when == 0)
+						when = Anope::CurTime;
+					if (setter.empty())
+						setter = "unknown";
+					(*entries)->push_back(new TopicHistoryEntry(ci, topic, setter, when));
+				}
+			}
 		}
 		else if (params[1].equals_ci("OFF"))
 		{
