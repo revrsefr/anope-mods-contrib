@@ -940,13 +940,20 @@ class OSNotify : public Module
 
 			if (ex.is_regex)
 			{
-				if (!ex.regex)
-					continue;
-
 				const Anope::string uh = u->GetIdent() + '@' + u->host;
 				const Anope::string nuhr = u->nick + '!' + uh + '#' + u->realname;
-				if (ex.regex->Matches(u->nick) || ex.regex->Matches(uh) || ex.regex->Matches(nuhr))
-					return true;
+				if (ex.regex)
+				{
+					if (ex.regex->Matches(u->nick) || ex.regex->Matches(uh) || ex.regex->Matches(nuhr))
+						return true;
+				}
+				else
+				{
+					// Fallback when regexengine is not configured: behave like the legacy code path
+					// which used Anope::Match(/.../) directly.
+					if (Anope::Match(u->nick, mask, false, true) || Anope::Match(uh, mask, false, true) || Anope::Match(nuhr, mask, false, true))
+						return true;
+				}
 				continue;
 			}
 
@@ -1101,15 +1108,7 @@ class OSNotify : public Module
 
 			if (ex.is_regex)
 			{
-				if (regexengine.empty())
-				{
-					Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (regexengine is not configured)";
-				}
-				else if (!provider)
-				{
-					Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (unable to find regex engine " << regexengine << ")";
-				}
-				else
+				if (provider)
 				{
 					try
 					{
@@ -1118,7 +1117,8 @@ class OSNotify : public Module
 					}
 					catch (const RegexException &exn)
 					{
-						Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (" << exn.GetReason() << ")";
+						// Leave uncompiled; IsExcluded will fall back to Anope::Match.
+						Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " could not be compiled (" << exn.GetReason() << ")";
 					}
 				}
 			}
