@@ -907,6 +907,7 @@ class OSNotify : public Module
 	NotifyEntryType notifyentry_type;
 	CommandOSNotify commandosnotify;
 	BotInfo *OperServ;
+	std::vector<Anope::string> exclude_masks;
 
 	const Anope::string BuildNUHR(const User *u)
 	{
@@ -914,6 +915,36 @@ class OSNotify : public Module
 			return "unknown";
 
 		return Anope::string(u->nick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname);
+	}
+
+	bool IsExcluded(const User *u) const
+	{
+		if (!u || exclude_masks.empty())
+			return false;
+
+		for (const auto &mask : exclude_masks)
+		{
+			if (mask.empty())
+				continue;
+
+			/* If it's just a nick glob, match against the nick directly. */
+			if (mask.find_first_of("!@#") == Anope::string::npos && !(mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/'))
+			{
+				if (Anope::Match(u->nick, mask, false, true))
+					return true;
+			}
+
+			if (NotifyList.Check(u, mask))
+				return true;
+		}
+
+		return false;
+	}
+
+	void DelMatchIfExcluded(const User *u)
+	{
+		if (u && IsExcluded(u) && NotifyList.IsMatch(u))
+			NotifyList.DelMatch(u);
 	}
 
 	void NLog(const Anope::string &t, const char *m, ...) ATTR_FORMAT(3, 4)
@@ -937,6 +968,8 @@ class OSNotify : public Module
 		{
 			const User *u = uit->second;
 			if (!u || (u && u->server && u->server->IsULined()))
+				continue;
+			if (IsExcluded(u))
 				continue;
 
 			bool matched = false;
@@ -964,7 +997,7 @@ class OSNotify : public Module
 	unsigned CheckUserOrChannel(User *u, Channel *c = nullptr, bool wantChan = false)
 	{
 		const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
-		if (!u || (wantChan && !c) || notifies.empty() || (u->server && u->server->IsULined()))
+		if (!u || (wantChan && !c) || notifies.empty() || (u->server && u->server->IsULined()) || IsExcluded(u))
 			return 0;
 
 		unsigned matches = 0;
@@ -1010,6 +1043,24 @@ class OSNotify : public Module
 	void OnReload(Configuration::Conf &conf) override
 	{
 		OperServ = conf.GetClient("OperServ");
+
+		exclude_masks.clear();
+		const auto &modconf = conf.GetModule(this);
+
+		/* Space-separated list of masks to ignore (same matching rules as NOTIFY). */
+		{
+			spacesepstream sep(modconf.Get<const Anope::string>("exclude", ""));
+			sep.GetTokens(exclude_masks);
+		}
+
+		/* Also support multiple exclude blocks: exclude { mask = "..." } */
+		for (int i = 0; i < modconf.CountBlock("exclude"); ++i)
+		{
+			const auto &blk = modconf.GetBlock("exclude", i);
+			const auto &mask = blk.Get<const Anope::string>("mask", "");
+			if (!mask.empty())
+				exclude_masks.push_back(mask);
+		}
 	}
 
 	void OnUplinkSync(Server *) override
@@ -1020,6 +1071,8 @@ class OSNotify : public Module
 	void OnUserConnect(User *u, bool &) override
 	{
 		if (Me && !Me->IsSynced())
+			return;
+		if (IsExcluded(u))
 			return;
 
 		unsigned matches = CheckUserOrChannel(u);
@@ -1032,6 +1085,12 @@ class OSNotify : public Module
 
 	void OnUserQuit(User *u, const Anope::string &msg) override
 	{
+		if (IsExcluded(u))
+		{
+			DelMatchIfExcluded(u);
+			return;
+		}
+
 		if (NotifyList.IsMatch(u))
 		{
 			if (NotifyList.HasFlag(u, 'd'))
@@ -1043,6 +1102,12 @@ class OSNotify : public Module
 
 	void OnUserNickChange(User *u, const Anope::string &oldnick) override
 	{
+		if (IsExcluded(u))
+		{
+			DelMatchIfExcluded(u);
+			return;
+		}
+
 		const Anope::string nuhr = oldnick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname;
 		bool oldmatch = false;
 
@@ -1067,6 +1132,12 @@ class OSNotify : public Module
 
 	void OnJoinChannel(User *u, Channel *c) override
 	{
+		if (IsExcluded(u))
+		{
+			DelMatchIfExcluded(u);
+			return;
+		}
+
 		bool oldmatch = false;
 
 		if (NotifyList.IsMatch(u))
@@ -1090,6 +1161,8 @@ class OSNotify : public Module
 
 	void OnPartChannel(User *u, Channel *c, const Anope::string &channel, const Anope::string &msg) override
 	{
+		if (IsExcluded(u))
+			return;
 		if (NotifyList.HasFlag(u, 'p'))
 			NLog("channel", "%s parted %s (reason: %s)", BuildNUHR(u).c_str(), c->name.c_str(), msg.c_str());
 	}
@@ -1098,15 +1171,26 @@ class OSNotify : public Module
 	{
 		User *u = source.GetUser();
 
-		if (NotifyList.HasFlag(target, 'k'))
+		if (IsExcluded(target))
+			DelMatchIfExcluded(target);
+		if (IsExcluded(u))
+			u = nullptr;
+
+		if (target && !IsExcluded(target) && NotifyList.HasFlag(target, 'k'))
 			NLog("channel", "%s was kicked from %s by %s (reason: %s)", BuildNUHR(target).c_str(), channel.c_str(), (u ? u->nick.c_str() : "unknown"), kickmsg.c_str());
 
-		if (u && NotifyList.HasFlag(u, 'k'))
+		if (u && !IsExcluded(u) && NotifyList.HasFlag(u, 'k'))
 			NLog("channel", "%s kicked %s from %s (reason: %s)", BuildNUHR(u).c_str(), BuildNUHR(target).c_str(), channel.c_str(), kickmsg.c_str());
 	}
 
 	void OnUserMode(const MessageSource &setter, User *u, const Anope::string &mname, bool setting)
 	{
+		if (!u || IsExcluded(u))
+		{
+			DelMatchIfExcluded(u);
+			return;
+		}
+
 		const Anope::string &nuhr = BuildNUHR(u);
 		UserMode *um = ModeManager::FindUserModeByName(mname);
 
@@ -1133,12 +1217,16 @@ class OSNotify : public Module
 		const User *u = setter.GetUser();
 		if (!u)
 			return;
+		if (IsExcluded(u))
+			return;
 
 		if (NotifyList.HasFlag(u, 'm'))
 		{
 			if (mode->type == MODE_STATUS)
 			{
 				const User *target = User::Find(param, false);
+				if (target && IsExcluded(target))
+					return;
 				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (target ? target->nick.c_str() : "unknown"), c->name.c_str());
 			}
 			else
@@ -1147,6 +1235,8 @@ class OSNotify : public Module
 		else if (mode->type == MODE_STATUS)
 		{
 			const User *target = User::Find(param, false);
+			if (target && IsExcluded(target))
+				return;
 			if (target && NotifyList.HasFlag(target, 'm'))
 				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", u->nick.c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), BuildNUHR(target).c_str(), c->name.c_str());
 		}
@@ -1173,6 +1263,8 @@ class OSNotify : public Module
 			return;
 
 		const User *u = source ? source : User::Find(user, false);
+		if (u && IsExcluded(u))
+			return;
 
 		if (u && NotifyList.HasFlag(u, 't'))
 			NLog("channel", "TOPIC -- %s set to %s by %s", c->name.c_str(), topic.c_str(), BuildNUHR(u).c_str());
@@ -1182,6 +1274,8 @@ class OSNotify : public Module
 	{
 		const User *u = source.GetUser();
 		if (!u)
+			return;
+		if (IsExcluded(u))
 			return;
 
 		const Anope::string &cmd = command->name;
