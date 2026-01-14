@@ -189,6 +189,7 @@ public:
 	bool SetGroupFlag(CommandSource& source, const Anope::string& groupname, GSGroupFlags flag, bool enabled);
 
 	bool GetGroupVHost(const Anope::string& groupname, Anope::string& out) const;
+	bool GetGroupFlags(const Anope::string& groupname, GSGroupFlags& out) const;
 	void GetGroupsForAccount(const NickCore* nc, std::vector<Anope::string>& out, bool show_hidden) const;
 
 	void SaveDB();

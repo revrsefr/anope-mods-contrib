@@ -1247,6 +1247,16 @@ bool GroupServCore::GetGroupVHost(const Anope::string& groupname, Anope::string&
 	return true;
 }
 
+bool GroupServCore::GetGroupFlags(const Anope::string& groupname, GSGroupFlags& out) const
+{
+	out = GSGroupFlags::NONE;
+	auto it = this->groups.find(NormalizeKey(groupname));
+	if (it == this->groups.end())
+		return false;
+	out = it->second.flags;
+	return true;
+}
+
 void GroupServCore::GetGroupsForAccount(const NickCore* nc, std::vector<Anope::string>& out, bool show_hidden) const
 {
 	out.clear();

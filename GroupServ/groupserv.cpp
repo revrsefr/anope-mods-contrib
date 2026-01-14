@@ -48,7 +48,7 @@
  *
  *   # Default flags granted when a user JOINs an open group.
  *   # These are GroupServ access flags (NOT IRC user modes).
- *   # Accepts: +A +i, +ACLVIEW +INVITE, or compact +Ai.
+ *   # Accepts: +A +I, +ACLVIEW +INVITE, or compact +AI.
  *   default_joinflags = "+A"
  *
  *   # Auto-save interval in seconds (0 disables periodic autosave)
@@ -1037,7 +1037,7 @@ public:
 	GroupServ(const Anope::string& modname, const Anope::string& creator)
 		: Module(modname, creator, VENDOR)
 		, core(this)
-		, chanaccess(this, "groupserv/chanaccess")
+		, chanaccess(this, "groupserv:chanaccess")
 		, chanaccess_type(chanaccess)
 		, cmd_cs_set_group(this, core, chanaccess)
 		, cmd_cs_set_grouponly(this, core, chanaccess)
@@ -1123,6 +1123,31 @@ public:
 			out += g;
 		}
 		info["GroupServ"] = out;
+	}
+
+	void OnChanInfo(CommandSource& source, ChannelInfo* ci, InfoFormatter& info, bool show_hidden) override
+	{
+		if (!ci)
+			return;
+
+		auto* d = this->chanaccess.Get(ci);
+		if (!d || d->group.empty())
+			return;
+
+		GSGroupFlags gflags = GSGroupFlags::NONE;
+		if (!this->core.GetGroupFlags(d->group, gflags))
+		{
+			// Only show missing associations to users who can already see hidden details.
+			if (show_hidden)
+				info[_("GroupServ")] = d->group + " (missing)";
+			return;
+		}
+
+		// Mirror NickServ INFO behaviour: only show non-public groups to users who can see hidden details.
+		if (!show_hidden && !HasFlag(gflags, GSGroupFlags::PUBLIC))
+			return;
+
+		info[_("GroupServ")] = d->group;
 	}
 };
 
