@@ -34,6 +34,8 @@ log { target = "#services-notify"; bot = "OperServ"; other = "notify/..."; }
 
 #include "module.h"
 
+#include <memory>
+
 
 /* Dataset for each Notify mask (entry) */
 struct NotifyEntry : Serializable
@@ -907,7 +909,15 @@ class OSNotify : public Module
 	NotifyEntryType notifyentry_type;
 	CommandOSNotify commandosnotify;
 	BotInfo *OperServ;
-	std::vector<Anope::string> exclude_masks;
+
+	struct ExcludeMask final
+	{
+		Anope::string mask;
+		bool is_regex = false;
+		std::unique_ptr<Regex> regex;
+	};
+
+	std::vector<ExcludeMask> exclude_masks;
 
 	const Anope::string BuildNUHR(const User *u)
 	{
@@ -922,10 +932,23 @@ class OSNotify : public Module
 		if (!u || exclude_masks.empty())
 			return false;
 
-		for (const auto &mask : exclude_masks)
+		for (const auto &ex : exclude_masks)
 		{
+			const auto &mask = ex.mask;
 			if (mask.empty())
 				continue;
+
+			if (ex.is_regex)
+			{
+				if (!ex.regex)
+					continue;
+
+				const Anope::string uh = u->GetIdent() + '@' + u->host;
+				const Anope::string nuhr = u->nick + '!' + uh + '#' + u->realname;
+				if (ex.regex->Matches(uh) || ex.regex->Matches(nuhr))
+					return true;
+				continue;
+			}
 
 			/* If it's just a nick glob, match against the nick directly. */
 			if (mask.find_first_of("!@#") == Anope::string::npos && !(mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/'))
@@ -1047,10 +1070,11 @@ class OSNotify : public Module
 		exclude_masks.clear();
 		const auto &modconf = conf.GetModule(this);
 
+		std::vector<Anope::string> raw_excludes;
 		/* Space-separated list of masks to ignore (same matching rules as NOTIFY). */
 		{
 			spacesepstream sep(modconf.Get<const Anope::string>("exclude", ""));
-			sep.GetTokens(exclude_masks);
+			sep.GetTokens(raw_excludes);
 		}
 
 		/* Also support multiple exclude blocks: exclude { mask = "..." } */
@@ -1059,7 +1083,47 @@ class OSNotify : public Module
 			const auto &blk = modconf.GetBlock("exclude", i);
 			const auto &mask = blk.Get<const Anope::string>("mask", "");
 			if (!mask.empty())
-				exclude_masks.push_back(mask);
+				raw_excludes.push_back(mask);
+		}
+
+		const Anope::string regexengine = Config->GetBlock("options").Get<Anope::string>("regexengine");
+		ServiceReference<RegexProvider> provider("Regex", regexengine);
+
+		for (auto mask : raw_excludes)
+		{
+			mask.trim();
+			if (mask.empty())
+				continue;
+
+			ExcludeMask ex;
+			ex.mask = mask;
+			ex.is_regex = (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/');
+
+			if (ex.is_regex)
+			{
+				if (regexengine.empty())
+				{
+					Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (regexengine is not configured)";
+				}
+				else if (!provider)
+				{
+					Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (unable to find regex engine " << regexengine << ")";
+				}
+				else
+				{
+					try
+					{
+						Anope::string stripped = mask.substr(1, mask.length() - 2);
+						ex.regex.reset(provider->Compile(stripped));
+					}
+					catch (const RegexException &exn)
+					{
+						Log(LOG_NORMAL, "notify") << "NOTIFY: exclude mask " << mask << " ignored (" << exn.GetReason() << ")";
+					}
+				}
+			}
+
+			exclude_masks.push_back(std::move(ex));
 		}
 	}
 
