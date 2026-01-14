@@ -160,12 +160,12 @@ class NotifyList
 	/* Check if a User matches to a mask */
 	bool Check(const User *u, const Anope::string &mask)
 	{
-		/* Regex mask: Matches against u@h and n!u@h#r only */
+		/* Regex mask: Matches against nick, u@h, and n!u@h#r */
 		if (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/')
 		{
 			const Anope::string uh = u->GetIdent() + '@' + u->host;
 			const Anope::string nuhr = u->nick + '!' + uh + '#' + u->realname;
-			return (Anope::Match(uh, mask, false, true) || Anope::Match(nuhr, mask, false, true));
+			return (Anope::Match(u->nick, mask, false, true) || Anope::Match(uh, mask, false, true) || Anope::Match(nuhr, mask, false, true));
 		}
 
 		/* Use 'modes' Entry to perform matching per item (nick, user, host, real) */
@@ -945,7 +945,7 @@ class OSNotify : public Module
 
 				const Anope::string uh = u->GetIdent() + '@' + u->host;
 				const Anope::string nuhr = u->nick + '!' + uh + '#' + u->realname;
-				if (ex.regex->Matches(uh) || ex.regex->Matches(nuhr))
+				if (ex.regex->Matches(u->nick) || ex.regex->Matches(uh) || ex.regex->Matches(nuhr))
 					return true;
 				continue;
 			}
