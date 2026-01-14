@@ -919,6 +919,38 @@ class OSNotify : public Module
 
 	std::vector<ExcludeMask> exclude_masks;
 
+	RegexProvider* GetBestRegexProvider() const
+	{
+		// Prefer the configured engine when set.
+		const Anope::string regexengine = Config->GetBlock("options").Get<Anope::string>("regexengine");
+		if (!regexengine.empty())
+		{
+			ServiceReference<RegexProvider> p("Regex", regexengine);
+			if (p)
+				return p;
+		}
+
+		// Otherwise, try common engines in a sensible order.
+		// PCRE2 module registers as "regex/pcre".
+		{
+			ServiceReference<RegexProvider> p("Regex", "regex/pcre");
+			if (p)
+				return p;
+		}
+		{
+			ServiceReference<RegexProvider> p("Regex", "regex/stdlib");
+			if (p)
+				return p;
+		}
+		{
+			ServiceReference<RegexProvider> p("Regex", "regex/posix");
+			if (p)
+				return p;
+		}
+
+		return nullptr;
+	}
+
 	const Anope::string BuildNUHR(const User *u)
 	{
 		if (!u)
@@ -1093,8 +1125,7 @@ class OSNotify : public Module
 				raw_excludes.push_back(mask);
 		}
 
-		const Anope::string regexengine = Config->GetBlock("options").Get<Anope::string>("regexengine");
-		ServiceReference<RegexProvider> provider("Regex", regexengine);
+		RegexProvider* provider = this->GetBestRegexProvider();
 
 		for (auto mask : raw_excludes)
 		{
