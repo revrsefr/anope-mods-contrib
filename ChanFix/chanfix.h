@@ -61,6 +61,7 @@ public:
 	bool IsAuspex(CommandSource& source) const;
 
 	bool RequestFix(CommandSource& source, const Anope::string& chname);
+	bool RequestFixFromChanServ(CommandSource& source, const Anope::string& chname);
 	bool SetMark(CommandSource& source, const Anope::string& chname, bool on, const Anope::string& reason);
 	bool SetNoFix(CommandSource& source, const Anope::string& chname, bool on, const Anope::string& reason);
 

@@ -39,6 +39,36 @@ public:
 	}
 };
 
+class CommandCSChanFix final
+	: public Command
+{
+	ChanFixCore& cf;
+
+public:
+	CommandCSChanFix(Module* creator, ChanFixCore& core)
+		: Command(creator, "chanserv/chanfix", 1, 1)
+		, cf(core)
+	{
+		this->SetDesc("Request ChanFix for an unregistered channel.");
+		this->SetSyntax("<#channel>");
+		this->AllowUnregistered(true);
+	}
+
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params) override
+	{
+		cf.RequestFixFromChanServ(source, params[0]);
+	}
+
+	bool OnHelp(CommandSource& source, const Anope::string&) override
+	{
+		source.Reply(" ");
+		source.Reply("Requests a fix for an unregistered channel.");
+		source.Reply("You must be opped in the channel or have chanfix/admin.");
+		source.Reply("Example: CHANFIX #channel");
+		return true;
+	}
+};
+
 class CommandChanFixScores final
 	: public Command
 {
@@ -236,6 +266,7 @@ class ChanFix final
 	ChanFixCore core;
 
 	CommandChanFix cmd_chanfix;
+	CommandCSChanFix cmd_cs_chanfix;
 	CommandChanFixScores cmd_scores;
 	CommandChanFixInfo cmd_info;
 	CommandChanFixList cmd_list;
@@ -269,6 +300,7 @@ public:
 		: Module(modname, creator, VENDOR)
 		, core(this)
 		, cmd_chanfix(this, core)
+		, cmd_cs_chanfix(this, core)
 		, cmd_scores(this, core)
 		, cmd_info(this, core)
 		, cmd_list(this, core)

@@ -756,6 +756,64 @@ bool ChanFixCore::RequestFix(CommandSource& source, const Anope::string& chname)
 	return true;
 }
 
+bool ChanFixCore::RequestFixFromChanServ(CommandSource& source, const Anope::string& chname)
+{
+	if (!IsValidChannelName(chname))
+	{
+		source.Reply("Invalid channel name.");
+		return false;
+	}
+
+	Channel* c = Channel::Find(chname);
+	if (!c)
+	{
+		source.Reply("Channel %s does not exist.", chname.c_str());
+		return false;
+	}
+
+	if (this->IsRegistered(c))
+	{
+		source.Reply("%s is registered; ChanFix will not touch it.", chname.c_str());
+		return false;
+	}
+
+	if (!this->IsAdmin(source))
+	{
+		User* u = source.GetUser();
+		if (!u)
+		{
+			source.Reply(ACCESS_DENIED);
+			return false;
+		}
+
+		ChanUserContainer* cuc = c->FindUser(u);
+		if (!cuc || !cuc->status.HasMode(this->op_status_char))
+		{
+			source.Reply(ACCESS_DENIED);
+			return false;
+		}
+	}
+
+	CFChannelRecord& rec = this->GetOrCreateRecord(c);
+	if (rec.nofix)
+	{
+		source.Reply("%s has NOFIX enabled.", chname.c_str());
+		return false;
+	}
+
+	const unsigned int highscore = this->GetHighScore(rec);
+	if (highscore < this->min_fix_score)
+	{
+		source.Reply("Scores for %s are too low (< %u) for a fix.", chname.c_str(), this->min_fix_score);
+		return false;
+	}
+
+	rec.fix_requested = true;
+	rec.fix_started = 0;
+	source.Reply("Fix request acknowledged for %s.", chname.c_str());
+	return true;
+}
+
 bool ChanFixCore::SetMark(CommandSource& source, const Anope::string& chname, bool on, const Anope::string& reason)
 {
 	if (!this->IsAuspex(source))
