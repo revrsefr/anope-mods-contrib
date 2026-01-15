@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
+#define CHANFIX_CHANNEL_DATA_TYPE "ChanFixChannel"
+
 struct CFOpRecord final
 {
 	Anope::string account; // empty or "*" means no account
@@ -24,6 +26,13 @@ struct CFOpRecord final
 };
 
 struct CFChannelRecord final
+{
+	// Deprecated placeholder. The ChanFix DB is now stored via Anope's
+	// serialization system using CFChannelData.
+};
+
+struct CFChannelData final
+	: Serializable
 {
 	Anope::string name;
 	time_t ts = 0;
@@ -42,6 +51,19 @@ struct CFChannelRecord final
 	time_t nofix_time = 0;
 
 	Anope::unordered_map<CFOpRecord> oprecords;
+
+	explicit CFChannelData(const Anope::string& chname);
+	~CFChannelData() override;
+};
+
+class ChanFixChannelDataType final
+	: public Serialize::Type
+{
+public:
+	explicit ChanFixChannelDataType(Module* owner);
+
+	void Serialize(Serializable* obj, Serialize::Data& data) const override;
+	Serializable* Unserialize(Serializable* obj, Serialize::Data& data) const override;
 };
 
 class ChanFixCore final
@@ -55,7 +77,10 @@ public:
 	void GatherTick();
 	void ExpireTick();
 	void AutoFixTick();
-	void SaveDB() const;
+
+	void LegacyImportIfNeeded();
+	bool LegacyImportNeedsSave() const { return this->legacy_import_needs_save; }
+	void ClearLegacyImportNeedsSave() { this->legacy_import_needs_save = false; }
 
 	bool IsAdmin(CommandSource& source) const;
 	bool IsAuspex(CommandSource& source) const;
@@ -72,14 +97,17 @@ public:
 	time_t GetGatherInterval() const { return this->gather_interval; }
 	time_t GetExpireInterval() const { return this->expire_interval; }
 	time_t GetAutofixInterval() const { return this->autofix_interval; }
-	time_t GetSaveInterval() const { return this->save_interval; }
 
 private:
 	Module* module;
 	BotInfo* chanfix = nullptr;
+	bool legacy_import_needs_save = false;
 
 	bool do_autofix = false;
 	bool join_to_fix = false;
+	bool clear_modes_on_fix = false;
+	bool clear_bans_on_fix = false;
+	bool clear_moderated_on_fix = false;
 
 	unsigned int op_threshold = 3;
 	unsigned int min_fix_score = 12;
@@ -92,7 +120,6 @@ private:
 	time_t gather_interval = 5 * 60;
 	time_t expire_interval = 60 * 60;
 	time_t autofix_interval = 60;
-	time_t save_interval = 10 * 60;
 	unsigned int expire_divisor = 672;
 
 	char op_status_char = 'o';
@@ -100,34 +127,23 @@ private:
 	Anope::string admin_priv = "chanfix/admin";
 	Anope::string auspex_priv = "chanfix/auspex";
 
-	Anope::unordered_map<CFChannelRecord> channels;
-
-	static constexpr const char* DB_MAGIC = "chanfix";
-	static constexpr unsigned DB_VERSION = 1;
-
-	void LoadDB();
-	Anope::string GetDBPath() const;
-
-	static Anope::string EscapeValue(const Anope::string& in);
-	static Anope::string UnescapeValue(const Anope::string& in);
-
 	bool IsRegistered(Channel* c) const;
 	static bool IsValidChannelName(const Anope::string& name);
 
-	CFChannelRecord* GetRecord(const Anope::string& chname);
-	CFChannelRecord& GetOrCreateRecord(Channel* c);
+	CFChannelData* GetRecord(const Anope::string& chname);
+	CFChannelData& GetOrCreateRecord(Channel* c);
 
 	unsigned int CountOps(Channel* c) const;
 	Anope::string KeyForUser(User* u) const;
-	CFOpRecord* FindRecord(CFChannelRecord& rec, User* u);
-	void UpdateOpRecord(CFChannelRecord& rec, User* u);
+	CFOpRecord* FindRecord(CFChannelData& rec, User* u);
+	bool UpdateOpRecord(CFChannelData& rec, User* u);
 
 	unsigned int CalculateScore(const CFOpRecord& orec) const;
-	unsigned int GetHighScore(const CFChannelRecord& rec) const;
-	unsigned int GetThreshold(const CFChannelRecord& rec, time_t now) const;
+	unsigned int GetHighScore(const CFChannelData& rec) const;
+	unsigned int GetThreshold(const CFChannelData& rec, time_t now) const;
 
-	bool ShouldHandle(CFChannelRecord& rec, Channel* c) const;
-	bool CanStartFix(const CFChannelRecord& rec, Channel* c) const;
-	bool FixChannel(CFChannelRecord& rec, Channel* c);
+	bool ShouldHandle(CFChannelData& rec, Channel* c) const;
+	bool CanStartFix(const CFChannelData& rec, Channel* c) const;
+	bool FixChannel(CFChannelData& rec, Channel* c);
 	void ClearBans(Channel* c);
 };

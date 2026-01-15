@@ -7,40 +7,17 @@
 
 namespace fs = std::filesystem;
 
-ChanFixCore::ChanFixCore(Module* owner)
-	: module(owner)
-{
-	this->LoadDB();
-}
+using cf_channel_map = Anope::unordered_map<CFChannelData *>;
+static Serialize::Checker<cf_channel_map> ChanFixChannelList(CHANFIX_CHANNEL_DATA_TYPE);
 
-ChanFixCore::~ChanFixCore()
-{
-	this->SaveDB();
-}
+static constexpr const char* LEGACY_DB_MAGIC = "chanfix";
 
-Anope::string ChanFixCore::GetDBPath() const
+static Anope::string GetLegacyDBPath()
 {
 	return Anope::ExpandData("chanfix.db");
 }
 
-Anope::string ChanFixCore::EscapeValue(const Anope::string& in)
-{
-	Anope::string out;
-	for (const char ch : in)
-	{
-		switch (ch)
-		{
-			case '\\': out += "\\\\"; break;
-			case '\n': out += "\\n"; break;
-			case '\r': break;
-			case '|': out += "\\|"; break;
-			default: out += ch; break;
-		}
-	}
-	return out;
-}
-
-Anope::string ChanFixCore::UnescapeValue(const Anope::string& in)
+static Anope::string UnescapeLegacyValue(const Anope::string& in)
 {
 	Anope::string out;
 	for (size_t i = 0; i < in.length(); ++i)
@@ -77,11 +54,146 @@ Anope::string ChanFixCore::UnescapeValue(const Anope::string& in)
 	return out;
 }
 
-void ChanFixCore::LoadDB()
+CFChannelData::CFChannelData(const Anope::string& chname)
+	: Serializable(CHANFIX_CHANNEL_DATA_TYPE)
+	, name(chname)
 {
-	this->channels.clear();
+	if (chname.empty())
+		throw ModuleException("ChanFix: empty channel name passed to CFChannelData");
 
-	const fs::path path(this->GetDBPath().c_str());
+	if (!ChanFixChannelList->insert_or_assign(this->name, this).second)
+		Log(LOG_DEBUG) << "Duplicate ChanFix record for " << this->name << "?";
+}
+
+CFChannelData::~CFChannelData()
+{
+	ChanFixChannelList->erase(this->name);
+}
+
+ChanFixChannelDataType::ChanFixChannelDataType(Module* owner)
+	: Serialize::Type(CHANFIX_CHANNEL_DATA_TYPE, owner)
+{
+}
+
+void ChanFixChannelDataType::Serialize(Serializable* obj, Serialize::Data& data) const
+{
+	const auto* rec = static_cast<const CFChannelData*>(obj);
+
+	data.Store("name", rec->name);
+	data.Store("ts", rec->ts);
+	data.Store("lastupdate", rec->lastupdate);
+	data.Store("fix_started", rec->fix_started);
+	data.Store("fix_requested", rec->fix_requested);
+
+	data.Store("marked", rec->marked);
+	data.Store("mark_setter", rec->mark_setter);
+	data.Store("mark_time", rec->mark_time);
+	data.Store("mark_reason", rec->mark_reason);
+
+	data.Store("nofix", rec->nofix);
+	data.Store("nofix_setter", rec->nofix_setter);
+	data.Store("nofix_time", rec->nofix_time);
+	data.Store("nofix_reason", rec->nofix_reason);
+
+	data.Store("opcount", static_cast<uint64_t>(rec->oprecords.size()));
+	uint64_t i = 0;
+	for (const auto& [key, o] : rec->oprecords)
+	{
+		const Anope::string prefix = "op" + Anope::ToString(i) + ".";
+		data.Store(prefix + "key", key);
+		data.Store(prefix + "account", o.account);
+		data.Store(prefix + "user", o.user);
+		data.Store(prefix + "host", o.host);
+		data.Store(prefix + "firstseen", o.firstseen);
+		data.Store(prefix + "lastevent", o.lastevent);
+		data.Store(prefix + "age", o.age);
+		++i;
+	}
+}
+
+Serializable* ChanFixChannelDataType::Unserialize(Serializable* obj, Serialize::Data& data) const
+{
+	Anope::string name;
+	data["name"] >> name;
+	if (name.empty())
+		return nullptr;
+
+	CFChannelData* rec = nullptr;
+	if (obj)
+	{
+		rec = anope_dynamic_static_cast<CFChannelData*>(obj);
+	}
+	else
+	{
+		// db_json calls Unserialize with obj == nullptr for all records.
+		// Reuse existing objects (e.g. across MODRELOAD) to avoid duplicates.
+		auto it = ChanFixChannelList->find(name);
+		if (it != ChanFixChannelList->end())
+			rec = it->second;
+		if (!rec)
+			rec = new CFChannelData(name);
+	}
+
+	data["ts"] >> rec->ts;
+	data["lastupdate"] >> rec->lastupdate;
+	data["fix_started"] >> rec->fix_started;
+	data["fix_requested"] >> rec->fix_requested;
+
+	data["marked"] >> rec->marked;
+	data["mark_setter"] >> rec->mark_setter;
+	data["mark_time"] >> rec->mark_time;
+	data["mark_reason"] >> rec->mark_reason;
+
+	data["nofix"] >> rec->nofix;
+	data["nofix_setter"] >> rec->nofix_setter;
+	data["nofix_time"] >> rec->nofix_time;
+	data["nofix_reason"] >> rec->nofix_reason;
+
+	uint64_t opcount = 0;
+	data["opcount"] >> opcount;
+	rec->oprecords.clear();
+	for (uint64_t i = 0; i < opcount; ++i)
+	{
+		const Anope::string prefix = "op" + Anope::ToString(i) + ".";
+		Anope::string key;
+		CFOpRecord o;
+		data[prefix + "key"] >> key;
+		data[prefix + "account"] >> o.account;
+		data[prefix + "user"] >> o.user;
+		data[prefix + "host"] >> o.host;
+		data[prefix + "firstseen"] >> o.firstseen;
+		data[prefix + "lastevent"] >> o.lastevent;
+		data[prefix + "age"] >> o.age;
+
+		if (key.empty())
+		{
+			if (!o.account.empty() && o.account != "*")
+				key = o.account;
+			else if (!o.user.empty() && !o.host.empty())
+				key = o.user + "@" + o.host;
+		}
+		if (!key.empty())
+			rec->oprecords[key] = std::move(o);
+	}
+
+	return rec;
+}
+
+ChanFixCore::ChanFixCore(Module* owner)
+	: module(owner)
+{
+}
+
+ChanFixCore::~ChanFixCore()
+{
+}
+
+void ChanFixCore::LegacyImportIfNeeded()
+{
+	if (!ChanFixChannelList->empty())
+		return;
+
+	const fs::path path(GetLegacyDBPath().c_str());
 	std::error_code ec;
 	if (!fs::exists(path, ec))
 		return;
@@ -93,9 +205,10 @@ void ChanFixCore::LoadDB()
 	std::string raw;
 	Anope::string line;
 	bool header_ok = false;
-	while (std::getline(in, raw))
+			std::string raw;
 	{
 		line = Anope::string(raw);
+			unsigned int imported = 0;
 		line.trim();
 		if (line.empty())
 			continue;
@@ -104,7 +217,7 @@ void ChanFixCore::LoadDB()
 		{
 			std::vector<Anope::string> parts;
 			sepstream(line, '|').GetTokens(parts);
-			if (parts.size() >= 2 && parts[0].equals_ci(DB_MAGIC))
+			if (parts.size() >= 2 && parts[0].equals_ci(LEGACY_DB_MAGIC))
 			{
 				header_ok = true;
 				continue;
@@ -123,111 +236,83 @@ void ChanFixCore::LoadDB()
 			if (parts.size() < 6)
 				continue;
 
-			CFChannelRecord rec;
-			rec.name = UnescapeValue(parts[1]);
-			try { rec.ts = static_cast<time_t>(Anope::Convert<uint64_t>(parts[2], 0)); } catch (...) { rec.ts = 0; }
-			try { rec.lastupdate = static_cast<time_t>(Anope::Convert<uint64_t>(parts[3], 0)); } catch (...) { rec.lastupdate = 0; }
-			try { rec.fix_started = static_cast<time_t>(Anope::Convert<uint64_t>(parts[4], 0)); } catch (...) { rec.fix_started = 0; }
-			rec.fix_requested = (parts[5] == "1");
+			Anope::string chname = UnescapeLegacyValue(parts[1]);
+			if (chname.empty())
+				continue;
 
-			// Optional metadata.
+			CFChannelData* rec = nullptr;
+			auto it = ChanFixChannelList->find(chname);
+			if (it != ChanFixChannelList->end())
+				rec = it->second;
+			else
+				rec = new CFChannelData(chname);
+
+			try { rec->ts = static_cast<time_t>(Anope::Convert<uint64_t>(parts[2], 0)); } catch (...) { rec->ts = 0; }
+			try { rec->lastupdate = static_cast<time_t>(Anope::Convert<uint64_t>(parts[3], 0)); } catch (...) { rec->lastupdate = 0; }
+			try { rec->fix_started = static_cast<time_t>(Anope::Convert<uint64_t>(parts[4], 0)); } catch (...) { rec->fix_started = 0; }
+			rec->fix_requested = (parts[5] == "1");
+
 			if (parts.size() >= 9)
 			{
-				rec.marked = (parts[6] == "1");
-				rec.mark_setter = UnescapeValue(parts[7]);
-				try { rec.mark_time = static_cast<time_t>(Anope::Convert<uint64_t>(parts[8], 0)); } catch (...) { rec.mark_time = 0; }
+				rec->marked = (parts[6] == "1");
+				rec->mark_setter = UnescapeLegacyValue(parts[7]);
+				try { rec->mark_time = static_cast<time_t>(Anope::Convert<uint64_t>(parts[8], 0)); } catch (...) { rec->mark_time = 0; }
 				if (parts.size() >= 10)
-					rec.mark_reason = UnescapeValue(parts[9]);
+					rec->mark_reason = UnescapeLegacyValue(parts[9]);
 			}
 			if (parts.size() >= 13)
 			{
-				rec.nofix = (parts[10] == "1");
-				rec.nofix_setter = UnescapeValue(parts[11]);
-				try { rec.nofix_time = static_cast<time_t>(Anope::Convert<uint64_t>(parts[12], 0)); } catch (...) { rec.nofix_time = 0; }
+				rec->nofix = (parts[10] == "1");
+				rec->nofix_setter = UnescapeLegacyValue(parts[11]);
+				try { rec->nofix_time = static_cast<time_t>(Anope::Convert<uint64_t>(parts[12], 0)); } catch (...) { rec->nofix_time = 0; }
 				if (parts.size() >= 14)
-					rec.nofix_reason = UnescapeValue(parts[13]);
+					rec->nofix_reason = UnescapeLegacyValue(parts[13]);
 			}
 
-			this->channels[rec.name] = std::move(rec);
+			++imported;
 		}
 		else if (type.equals_ci("O"))
 		{
 			if (parts.size() < 8)
 				continue;
-			Anope::string chname = UnescapeValue(parts[1]);
-			auto it = this->channels.find(chname);
-			if (it == this->channels.end())
-			{
-				CFChannelRecord rec;
-				rec.name = chname;
-				this->channels[chname] = std::move(rec);
-				it = this->channels.find(chname);
-			}
+			Anope::string chname = UnescapeLegacyValue(parts[1]);
+			if (chname.empty())
+				continue;
+
+			CFChannelData* rec = nullptr;
+			auto it = ChanFixChannelList->find(chname);
+			if (it != ChanFixChannelList->end())
+				rec = it->second;
+			else
+				rec = new CFChannelData(chname);
 
 			CFOpRecord o;
-			o.account = UnescapeValue(parts[2]);
-			o.user = UnescapeValue(parts[3]);
-			o.host = UnescapeValue(parts[4]);
+			o.account = UnescapeLegacyValue(parts[2]);
+			o.user = UnescapeLegacyValue(parts[3]);
+			o.host = UnescapeLegacyValue(parts[4]);
 			try { o.firstseen = static_cast<time_t>(Anope::Convert<uint64_t>(parts[5], 0)); } catch (...) { o.firstseen = 0; }
 			try { o.lastevent = static_cast<time_t>(Anope::Convert<uint64_t>(parts[6], 0)); } catch (...) { o.lastevent = 0; }
 			try { o.age = Anope::Convert<unsigned int>(parts[7], 0); } catch (...) { o.age = 0; }
 
 			Anope::string key = (o.account.empty() || o.account == "*") ? (o.user + "@" + o.host) : o.account;
-			it->second.oprecords[key] = std::move(o);
-		}
-	}
-}
-
-void ChanFixCore::SaveDB() const
-{
-	const fs::path path(this->GetDBPath().c_str());
-	std::error_code ec;
-	fs::create_directories(path.parent_path(), ec);
-
-	const fs::path tmp = path.string() + ".tmp";
-	std::ofstream out(tmp, std::ios::out | std::ios::trunc);
-	if (!out.is_open())
-		return;
-
-	out << DB_MAGIC << "|" << DB_VERSION << "\n";
-	for (const auto& [_, rec] : this->channels)
-	{
-		out << "C|" << EscapeValue(rec.name)
-			<< "|" << static_cast<uint64_t>(rec.ts)
-			<< "|" << static_cast<uint64_t>(rec.lastupdate)
-			<< "|" << static_cast<uint64_t>(rec.fix_started)
-			<< "|" << (rec.fix_requested ? "1" : "0")
-			<< "|" << (rec.marked ? "1" : "0")
-			<< "|" << EscapeValue(rec.mark_setter)
-			<< "|" << static_cast<uint64_t>(rec.mark_time)
-			<< "|" << EscapeValue(rec.mark_reason)
-			<< "|" << (rec.nofix ? "1" : "0")
-			<< "|" << EscapeValue(rec.nofix_setter)
-			<< "|" << static_cast<uint64_t>(rec.nofix_time)
-			<< "|" << EscapeValue(rec.nofix_reason)
-			<< "\n";
-
-		for (const auto& [key, o] : rec.oprecords)
-		{
-			out << "O|" << EscapeValue(rec.name)
-				<< "|" << EscapeValue(o.account.empty() ? "*" : o.account)
-				<< "|" << EscapeValue(o.user)
-				<< "|" << EscapeValue(o.host)
-				<< "|" << static_cast<uint64_t>(o.firstseen)
-				<< "|" << static_cast<uint64_t>(o.lastevent)
-				<< "|" << o.age
-				<< "\n";
+			if (!key.empty())
+				rec->oprecords[key] = std::move(o);
 		}
 	}
 
-	out.close();
+	for (const auto& [_, rec] : *ChanFixChannelList)
+		if (rec)
+			rec->QueueUpdate();
 
-	fs::rename(tmp, path, ec);
-	if (ec)
-	{
-		fs::remove(path, ec);
-		fs::rename(tmp, path, ec);
-	}
+	// IMPORTANT: do not call Anope::SaveDatabases() here.
+	// At startup, this function can run before the database backend has loaded
+	// the existing DB, and forcing a save can overwrite the main database file.
+	// We'll request a save later (after services are synced) from the module.
+	if (imported > 0)
+		this->legacy_import_needs_save = true;
+
+	const fs::path migrated = path.string() + ".migrated";
+	fs::rename(path, migrated, ec);
 }
 
 bool ChanFixCore::IsValidChannelName(const Anope::string& name)
@@ -244,26 +329,25 @@ bool ChanFixCore::IsRegistered(Channel* c) const
 	return ChannelInfo::Find(c->name) != NULL;
 }
 
-CFChannelRecord* ChanFixCore::GetRecord(const Anope::string& chname)
+CFChannelData* ChanFixCore::GetRecord(const Anope::string& chname)
 {
-	auto it = this->channels.find(chname);
-	if (it == this->channels.end())
+	auto it = ChanFixChannelList->find(chname);
+	if (it == ChanFixChannelList->end())
 		return nullptr;
-	return &it->second;
+	return it->second;
 }
 
-CFChannelRecord& ChanFixCore::GetOrCreateRecord(Channel* c)
+CFChannelData& ChanFixCore::GetOrCreateRecord(Channel* c)
 {
-	auto it = this->channels.find(c->name);
-	if (it != this->channels.end())
-		return it->second;
+	auto it = ChanFixChannelList->find(c->name);
+	if (it != ChanFixChannelList->end() && it->second)
+		return *it->second;
 
-	CFChannelRecord rec;
-	rec.name = c->name;
-	rec.ts = c->created;
-	rec.lastupdate = Anope::CurTime;
-	this->channels[rec.name] = std::move(rec);
-	return this->channels[c->name];
+	auto* rec = new CFChannelData(c->name);
+	rec->ts = c->created;
+	rec->lastupdate = Anope::CurTime;
+	rec->QueueUpdate();
+	return *rec;
 }
 
 unsigned int ChanFixCore::CountOps(Channel* c) const
@@ -291,7 +375,7 @@ Anope::string ChanFixCore::KeyForUser(User* u) const
 	return u->GetVIdent() + "@" + u->GetDisplayedHost();
 }
 
-CFOpRecord* ChanFixCore::FindRecord(CFChannelRecord& rec, User* u)
+CFOpRecord* ChanFixCore::FindRecord(CFChannelData& rec, User* u)
 {
 	Anope::string key = this->KeyForUser(u);
 	if (key.empty())
@@ -311,6 +395,7 @@ CFOpRecord* ChanFixCore::FindRecord(CFChannelRecord& rec, User* u)
 			it2->second.account = u->Account()->display;
 			rec.oprecords[key] = it2->second;
 			rec.oprecords.erase(it2);
+			rec.lastupdate = Anope::CurTime;
 			auto it3 = rec.oprecords.find(key);
 			if (it3 != rec.oprecords.end())
 				return &it3->second;
@@ -320,12 +405,12 @@ CFOpRecord* ChanFixCore::FindRecord(CFChannelRecord& rec, User* u)
 	return nullptr;
 }
 
-void ChanFixCore::UpdateOpRecord(CFChannelRecord& rec, User* u)
+bool ChanFixCore::UpdateOpRecord(CFChannelData& rec, User* u)
 {
 	if (!u || u->Quitting())
-		return;
+		return false;
 	if (u->server && u->server->IsULined())
-		return;
+		return false;
 
 	CFOpRecord* existing = this->FindRecord(rec, u);
 	if (existing)
@@ -334,7 +419,8 @@ void ChanFixCore::UpdateOpRecord(CFChannelRecord& rec, User* u)
 		existing->lastevent = Anope::CurTime;
 		if (existing->account.empty() && u->Account())
 			existing->account = u->Account()->display;
-		return;
+		rec.lastupdate = Anope::CurTime;
+		return true;
 	}
 
 	CFOpRecord o;
@@ -348,6 +434,7 @@ void ChanFixCore::UpdateOpRecord(CFChannelRecord& rec, User* u)
 	Anope::string key = this->KeyForUser(u);
 	rec.oprecords[key] = std::move(o);
 	rec.lastupdate = Anope::CurTime;
+	return true;
 }
 
 unsigned int ChanFixCore::CalculateScore(const CFOpRecord& orec) const
@@ -363,7 +450,7 @@ unsigned int ChanFixCore::CalculateScore(const CFOpRecord& orec) const
 	return static_cast<unsigned int>(base);
 }
 
-unsigned int ChanFixCore::GetHighScore(const CFChannelRecord& rec) const
+unsigned int ChanFixCore::GetHighScore(const CFChannelData& rec) const
 {
 	unsigned int high = 0;
 	for (const auto& [_, o] : rec.oprecords)
@@ -375,7 +462,7 @@ unsigned int ChanFixCore::GetHighScore(const CFChannelRecord& rec) const
 	return high;
 }
 
-unsigned int ChanFixCore::GetThreshold(const CFChannelRecord& rec, time_t now) const
+unsigned int ChanFixCore::GetThreshold(const CFChannelData& rec, time_t now) const
 {
 	unsigned int highscore = this->GetHighScore(rec);
 	if (highscore == 0)
@@ -397,7 +484,7 @@ unsigned int ChanFixCore::GetThreshold(const CFChannelRecord& rec, time_t now) c
 	return static_cast<unsigned int>(threshold);
 }
 
-bool ChanFixCore::ShouldHandle(CFChannelRecord& rec, Channel* c) const
+bool ChanFixCore::ShouldHandle(CFChannelData& rec, Channel* c) const
 {
 	if (!c)
 		return false;
@@ -417,7 +504,7 @@ bool ChanFixCore::ShouldHandle(CFChannelRecord& rec, Channel* c) const
 	return true;
 }
 
-bool ChanFixCore::CanStartFix(const CFChannelRecord& rec, Channel* c) const
+bool ChanFixCore::CanStartFix(const CFChannelData& rec, Channel* c) const
 {
 	if (!c)
 		return false;
@@ -450,7 +537,7 @@ bool ChanFixCore::CanStartFix(const CFChannelRecord& rec, Channel* c) const
 	return false;
 }
 
-bool ChanFixCore::FixChannel(CFChannelRecord& rec, Channel* c)
+bool ChanFixCore::FixChannel(CFChannelData& rec, Channel* c)
 {
 	if (!c || !this->chanfix)
 		return false;
@@ -489,6 +576,33 @@ bool ChanFixCore::FixChannel(CFChannelRecord& rec, Channel* c)
 
 	if (opped == 0)
 		return false;
+
+	if (this->clear_modes_on_fix)
+	{
+		if (this->join_to_fix && !joined)
+		{
+			this->chanfix->Join(c);
+			joined = true;
+		}
+
+		if (c->HasMode("INVITE"))
+			c->RemoveMode(this->chanfix, "INVITE", "", false);
+		if (c->HasMode("LIMIT"))
+			c->RemoveMode(this->chanfix, "LIMIT", "", false);
+		if (c->HasMode("KEY"))
+		{
+			Anope::string key;
+			if (c->GetParam("KEY", key))
+				c->RemoveMode(this->chanfix, "KEY", key, false);
+		}
+		if (this->clear_moderated_on_fix && c->HasMode("MODERATED"))
+			c->RemoveMode(this->chanfix, "MODERATED", "", false);
+		if (this->clear_bans_on_fix)
+		{
+			for (const auto& mask : c->GetModeList("BAN"))
+				c->RemoveMode(this->chanfix, "BAN", mask, false);
+		}
+	}
 
 	ModeManager::ProcessModes();
 
@@ -577,6 +691,9 @@ void ChanFixCore::OnReload(Configuration::Conf& conf)
 
 	this->do_autofix = mod->Get<bool>("autofix", "no");
 	this->join_to_fix = mod->Get<bool>("join_to_fix", "no");
+	this->clear_modes_on_fix = mod->Get<bool>("clear_modes_on_fix", "no");
+	this->clear_bans_on_fix = mod->Get<bool>("clear_bans_on_fix", "no");
+	this->clear_moderated_on_fix = mod->Get<bool>("clear_moderated_on_fix", "no");
 
 	this->op_threshold = mod->Get<unsigned int>("op_threshold", "3");
 	this->min_fix_score = mod->Get<unsigned int>("min_fix_score", "12");
@@ -589,7 +706,6 @@ void ChanFixCore::OnReload(Configuration::Conf& conf)
 	this->gather_interval = mod->Get<time_t>("gather_interval", "300");
 	this->expire_interval = mod->Get<time_t>("expire_interval", "3600");
 	this->autofix_interval = mod->Get<time_t>("autofix_interval", "60");
-	this->save_interval = mod->Get<time_t>("save_interval", "600");
 	this->expire_divisor = mod->Get<unsigned int>("expire_divisor", "672");
 
 	ChannelMode* opmode = ModeManager::FindChannelModeByName("OP");
@@ -622,7 +738,8 @@ void ChanFixCore::GatherTick()
 		if (this->IsRegistered(c))
 			continue;
 
-		CFChannelRecord& rec = this->GetOrCreateRecord(c);
+		CFChannelData& rec = this->GetOrCreateRecord(c);
+		bool dirty = false;
 
 		for (const auto& [u, cuc] : c->users)
 		{
@@ -630,23 +747,36 @@ void ChanFixCore::GatherTick()
 				continue;
 			if (!cuc->status.HasMode(this->op_status_char))
 				continue;
-			this->UpdateOpRecord(rec, u);
+			dirty |= this->UpdateOpRecord(rec, u);
 		}
+
+		if (dirty)
+			rec.QueueUpdate();
 	}
 }
 
 void ChanFixCore::ExpireTick()
 {
 	const time_t now = Anope::CurTime;
-	for (auto it = this->channels.begin(); it != this->channels.end();)
+	for (auto it = ChanFixChannelList->begin(); it != ChanFixChannelList->end();)
 	{
-		CFChannelRecord& rec = it->second;
+		CFChannelData* recp = it->second;
+		++it;
+		if (!recp)
+			continue;
+		CFChannelData& rec = *recp;
+		bool dirty = false;
 
 		for (auto oit = rec.oprecords.begin(); oit != rec.oprecords.end();)
 		{
 			CFOpRecord& o = oit->second;
 			if (o.age > 0)
+			{
+				const unsigned int old_age = o.age;
 				o.age -= (o.age + this->expire_divisor - 1) / this->expire_divisor;
+				if (o.age != old_age)
+					dirty = true;
+			}
 
 			if (o.age > 0 && (now - o.lastevent) < this->retention_time)
 			{
@@ -655,16 +785,18 @@ void ChanFixCore::ExpireTick()
 			}
 
 			oit = rec.oprecords.erase(oit);
+			dirty = true;
 		}
 
 		const bool keep = (!rec.oprecords.empty() && (now - rec.lastupdate) < this->retention_time);
 		if (keep)
 		{
-			++it;
+			if (dirty)
+				rec.QueueUpdate();
 			continue;
 		}
 
-		it = this->channels.erase(it);
+		delete recp;
 	}
 }
 
@@ -673,8 +805,12 @@ void ChanFixCore::AutoFixTick()
 	if (!Me->IsSynced() || !this->chanfix)
 		return;
 
-	for (auto& [name, rec] : this->channels)
+	for (const auto& [name, recp] : *ChanFixChannelList)
 	{
+		if (!recp)
+			continue;
+		CFChannelData& rec = *recp;
+
 		Channel* c = Channel::Find(name);
 		if (!c)
 			continue;
@@ -682,6 +818,7 @@ void ChanFixCore::AutoFixTick()
 		if (!this->do_autofix && !rec.fix_requested)
 			continue;
 
+		bool dirty = false;
 		if (this->ShouldHandle(rec, c))
 		{
 			if (rec.fix_started == 0)
@@ -689,6 +826,7 @@ void ChanFixCore::AutoFixTick()
 				if (this->CanStartFix(rec, c))
 				{
 					rec.fix_started = Anope::CurTime;
+					dirty = true;
 					if (!this->FixChannel(rec, c))
 						this->ClearBans(c);
 				}
@@ -705,9 +843,20 @@ void ChanFixCore::AutoFixTick()
 		}
 		else
 		{
-			rec.fix_requested = false;
-			rec.fix_started = 0;
+			if (rec.fix_requested)
+			{
+				rec.fix_requested = false;
+				dirty = true;
+			}
+			if (rec.fix_started != 0)
+			{
+				rec.fix_started = 0;
+				dirty = true;
+			}
 		}
+
+		if (dirty)
+			rec.QueueUpdate();
 	}
 }
 
@@ -736,7 +885,7 @@ bool ChanFixCore::RequestFix(CommandSource& source, const Anope::string& chname)
 		return false;
 	}
 
-	CFChannelRecord& rec = this->GetOrCreateRecord(c);
+	CFChannelData& rec = this->GetOrCreateRecord(c);
 	if (rec.nofix)
 	{
 		source.Reply("%s has NOFIX enabled.", chname.c_str());
@@ -752,6 +901,7 @@ bool ChanFixCore::RequestFix(CommandSource& source, const Anope::string& chname)
 
 	rec.fix_requested = true;
 	rec.fix_started = 0;
+	rec.QueueUpdate();
 	source.Reply("Fix request acknowledged for %s.", chname.c_str());
 	return true;
 }
@@ -794,7 +944,7 @@ bool ChanFixCore::RequestFixFromChanServ(CommandSource& source, const Anope::str
 		}
 	}
 
-	CFChannelRecord& rec = this->GetOrCreateRecord(c);
+	CFChannelData& rec = this->GetOrCreateRecord(c);
 	if (rec.nofix)
 	{
 		source.Reply("%s has NOFIX enabled.", chname.c_str());
@@ -810,6 +960,7 @@ bool ChanFixCore::RequestFixFromChanServ(CommandSource& source, const Anope::str
 
 	rec.fix_requested = true;
 	rec.fix_started = 0;
+	rec.QueueUpdate();
 	source.Reply("Fix request acknowledged for %s.", chname.c_str());
 	return true;
 }
@@ -827,14 +978,17 @@ bool ChanFixCore::SetMark(CommandSource& source, const Anope::string& chname, bo
 		return false;
 	}
 
-	CFChannelRecord& rec = this->channels[chname];
-	rec.name = chname;
+	CFChannelData* recp = this->GetRecord(chname);
+	if (!recp)
+		recp = new CFChannelData(chname);
+	CFChannelData& rec = *recp;
 	if (on)
 	{
 		rec.marked = true;
 		rec.mark_setter = source.GetNick();
 		rec.mark_reason = reason;
 		rec.mark_time = Anope::CurTime;
+		rec.QueueUpdate();
 		source.Reply("%s is now marked.", chname.c_str());
 		return true;
 	}
@@ -843,6 +997,7 @@ bool ChanFixCore::SetMark(CommandSource& source, const Anope::string& chname, bo
 	rec.mark_setter.clear();
 	rec.mark_reason.clear();
 	rec.mark_time = 0;
+	rec.QueueUpdate();
 	source.Reply("%s is now unmarked.", chname.c_str());
 	return true;
 }
@@ -860,14 +1015,17 @@ bool ChanFixCore::SetNoFix(CommandSource& source, const Anope::string& chname, b
 		return false;
 	}
 
-	CFChannelRecord& rec = this->channels[chname];
-	rec.name = chname;
+	CFChannelData* recp = this->GetRecord(chname);
+	if (!recp)
+		recp = new CFChannelData(chname);
+	CFChannelData& rec = *recp;
 	if (on)
 	{
 		rec.nofix = true;
 		rec.nofix_setter = source.GetNick();
 		rec.nofix_reason = reason;
 		rec.nofix_time = Anope::CurTime;
+		rec.QueueUpdate();
 		source.Reply("%s is now set to NOFIX.", chname.c_str());
 		return true;
 	}
@@ -876,6 +1034,7 @@ bool ChanFixCore::SetNoFix(CommandSource& source, const Anope::string& chname, b
 	rec.nofix_setter.clear();
 	rec.nofix_reason.clear();
 	rec.nofix_time = 0;
+	rec.QueueUpdate();
 	source.Reply("%s is no longer set to NOFIX.", chname.c_str());
 	return true;
 }
@@ -888,13 +1047,13 @@ void ChanFixCore::ShowScores(CommandSource& source, const Anope::string& chname,
 		return;
 	}
 
-	CFChannelRecord* recp = this->GetRecord(chname);
+	CFChannelData* recp = this->GetRecord(chname);
 	if (!recp)
 	{
 		source.Reply("No CHANFIX record available for %s; try again later.", chname.c_str());
 		return;
 	}
-	CFChannelRecord& rec = *recp;
+	CFChannelData& rec = *recp;
 
 	std::vector<const CFOpRecord*> list;
 	list.reserve(rec.oprecords.size());
@@ -938,13 +1097,13 @@ void ChanFixCore::ShowInfo(CommandSource& source, const Anope::string& chname)
 		return;
 	}
 
-	CFChannelRecord* recp = this->GetRecord(chname);
+	CFChannelData* recp = this->GetRecord(chname);
 	if (!recp)
 	{
 		source.Reply("No CHANFIX record available for %s; try again later.", chname.c_str());
 		return;
 	}
-	CFChannelRecord& rec = *recp;
+	CFChannelData& rec = *recp;
 
 	Channel* c = Channel::Find(chname);
 	const unsigned int highscore = this->GetHighScore(rec);
@@ -980,8 +1139,11 @@ void ChanFixCore::ListChannels(CommandSource& source, const Anope::string& patte
 
 	Anope::string pat = pattern.empty() ? "*" : pattern;
 	unsigned int matches = 0;
-	for (const auto& [name, rec] : this->channels)
+	for (const auto& [name, recp] : *ChanFixChannelList)
 	{
+		if (!recp)
+			continue;
+		const CFChannelData& rec = *recp;
 		if (!Anope::Match(pat, name))
 			continue;
 

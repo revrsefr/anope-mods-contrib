@@ -226,7 +226,6 @@ public:
 		Gather,
 		Expire,
 		Autofix,
-		Save,
 	};
 
 	ChanFixTimer(Module* owner, ChanFixCore& core, time_t seconds, Kind kind)
@@ -249,9 +248,6 @@ public:
 			case Kind::Autofix:
 				cf.AutoFixTick();
 				break;
-			case Kind::Save:
-				cf.SaveDB();
-				break;
 		}
 	}
 
@@ -260,9 +256,39 @@ private:
 	Kind k;
 };
 
+class ChanFixDeferredSaveTimer final
+	: public Timer
+{
+	ChanFixCore& cf;
+
+public:
+	ChanFixDeferredSaveTimer(Module* creator, time_t timeout, bool dorepeat, ChanFixCore& core)
+		: Timer(creator, timeout, dorepeat)
+		, cf(core)
+	{
+	}
+
+	void Tick() override
+	{
+		if (!this->cf.LegacyImportNeedsSave())
+		{
+			delete this;
+			return;
+		}
+
+		if (!Me || !Me->IsSynced())
+			return;
+
+		this->cf.ClearLegacyImportNeedsSave();
+		Anope::SaveDatabases();
+		delete this;
+	}
+};
+
 class ChanFix final
 	: public Module
 {
+	ChanFixChannelDataType chanfixdata_type;
 	ChanFixCore core;
 
 	CommandChanFix cmd_chanfix;
@@ -276,14 +302,12 @@ class ChanFix final
 	std::unique_ptr<ChanFixTimer> gather;
 	std::unique_ptr<ChanFixTimer> expire;
 	std::unique_ptr<ChanFixTimer> autofix;
-	std::unique_ptr<ChanFixTimer> save;
 
 	void RecreateTimers()
 	{
 		this->gather.reset();
 		this->expire.reset();
 		this->autofix.reset();
-		this->save.reset();
 
 		if (this->core.GetGatherInterval() > 0)
 			this->gather = std::make_unique<ChanFixTimer>(this, this->core, this->core.GetGatherInterval(), ChanFixTimer::Kind::Gather);
@@ -291,13 +315,12 @@ class ChanFix final
 			this->expire = std::make_unique<ChanFixTimer>(this, this->core, this->core.GetExpireInterval(), ChanFixTimer::Kind::Expire);
 		if (this->core.GetAutofixInterval() > 0)
 			this->autofix = std::make_unique<ChanFixTimer>(this, this->core, this->core.GetAutofixInterval(), ChanFixTimer::Kind::Autofix);
-		if (this->core.GetSaveInterval() > 0)
-			this->save = std::make_unique<ChanFixTimer>(this, this->core, this->core.GetSaveInterval(), ChanFixTimer::Kind::Save);
 	}
 
 public:
 	ChanFix(const Anope::string& modname, const Anope::string& creator)
 		: Module(modname, creator, VENDOR)
+		, chanfixdata_type(this)
 		, core(this)
 		, cmd_chanfix(this, core)
 		, cmd_cs_chanfix(this, core)
@@ -313,6 +336,24 @@ public:
 	{
 		this->core.OnReload(conf);
 		this->RecreateTimers();
+	}
+
+	void OnModuleLoad(User*, Module* m) override
+	{
+		if (m == this)
+		{
+			this->core.LegacyImportIfNeeded();
+			if (this->core.LegacyImportNeedsSave())
+			{
+				if (Me && Me->IsSynced())
+				{
+					this->core.ClearLegacyImportNeedsSave();
+					Anope::SaveDatabases();
+				}
+				else
+					new ChanFixDeferredSaveTimer(this, 1, true, this->core);
+			}
+		}
 	}
 };
 
