@@ -11,6 +11,7 @@ using cf_channel_map = Anope::unordered_map<CFChannelData *>;
 static Serialize::Checker<cf_channel_map> ChanFixChannelList(CHANFIX_CHANNEL_DATA_TYPE);
 
 static constexpr const char* LEGACY_DB_MAGIC = "chanfix";
+static constexpr unsigned LEGACY_DB_VERSION = 1;
 
 static Anope::string GetLegacyDBPath()
 {
@@ -190,6 +191,7 @@ ChanFixCore::~ChanFixCore()
 
 void ChanFixCore::LegacyImportIfNeeded()
 {
+	// Only import if there are no records loaded via the configured DB backend.
 	if (!ChanFixChannelList->empty())
 		return;
 
@@ -205,10 +207,10 @@ void ChanFixCore::LegacyImportIfNeeded()
 	std::string raw;
 	Anope::string line;
 	bool header_ok = false;
-			std::string raw;
+	unsigned int imported = 0;
+	while (std::getline(in, raw))
 	{
 		line = Anope::string(raw);
-			unsigned int imported = 0;
 		line.trim();
 		if (line.empty())
 			continue;
@@ -219,6 +221,10 @@ void ChanFixCore::LegacyImportIfNeeded()
 			sepstream(line, '|').GetTokens(parts);
 			if (parts.size() >= 2 && parts[0].equals_ci(LEGACY_DB_MAGIC))
 			{
+				unsigned int ver = 0;
+				try { ver = Anope::Convert<unsigned int>(parts[1], 0); } catch (...) { ver = 0; }
+				if (ver != LEGACY_DB_VERSION)
+					return;
 				header_ok = true;
 				continue;
 			}
@@ -300,6 +306,7 @@ void ChanFixCore::LegacyImportIfNeeded()
 		}
 	}
 
+	// Queue all imported objects for persistence.
 	for (const auto& [_, rec] : *ChanFixChannelList)
 		if (rec)
 			rec->QueueUpdate();
@@ -311,6 +318,7 @@ void ChanFixCore::LegacyImportIfNeeded()
 	if (imported > 0)
 		this->legacy_import_needs_save = true;
 
+	// Move the legacy file out of the way so we don't re-import.
 	const fs::path migrated = path.string() + ".migrated";
 	fs::rename(path, migrated, ec);
 }
@@ -761,9 +769,10 @@ void ChanFixCore::ExpireTick()
 	for (auto it = ChanFixChannelList->begin(); it != ChanFixChannelList->end();)
 	{
 		CFChannelData* recp = it->second;
-		++it;
+		++it; // Advance early in case we delete the record.
 		if (!recp)
 			continue;
+
 		CFChannelData& rec = *recp;
 		bool dirty = false;
 
