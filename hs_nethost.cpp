@@ -7,9 +7,9 @@
  * Originally forked from https://gist.github.com/7330c12ce7a03c030871
  *
  * Configuration:
- * module { name = "hs_nethost"; prefix = "user/"; suffix = ""; setifnone = true; }
+ * module { name = "hs_nethost"; prefix = "user/"; suffix = ""; hashprefix = "/x-"; setifnone = true; }
  *
- * This will format a user's vhost as user/foo, and broadcast the vhost change to
+ * This will format a user's vhost as user/foo (or user/foo-bar/x-XXXX), and broadcast the vhost change to
  * other modules.
  */
 
@@ -18,6 +18,7 @@
 class HSNetHost : public Module
 {
 	bool setifnone;
+	Anope::string hashprefix;
 	Anope::string prefix;
 	Anope::string suffix;
 
@@ -33,6 +34,13 @@ class HSNetHost : public Module
 		return NULL;
 	}
 
+	Anope::string GenerateHash(NickCore *nc)
+	{
+		std::stringstream ss;
+		ss << std::hex << nc->GetId();
+		return ss.str();
+	}
+
 	void SetNetHost(NickAlias *na)
 	{
 		// If the NickAlias has an existing host not set by this module, do not touch it
@@ -42,6 +50,7 @@ class HSNetHost : public Module
 
 		Anope::string nick = na->nick;
 		Anope::string vhost;
+		bool usehash = false;
 
 		Anope::string valid_nick_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-";
 
@@ -50,12 +59,17 @@ class HSNetHost : public Module
 		{
 			if (valid_nick_chars.find((*it)) == Anope::string::npos)
 			{
+				usehash = true;
 				(*it) = '-';
 			}
 		}
 
 		// Construct vhost
 		vhost = prefix + nick + suffix;
+
+		// If the nickname contained invalid characters, append a hash since those were replaced with a -
+		if (usehash)
+			vhost += hashprefix + GenerateHash(na->nc);
 
 		if (!IRCD->IsHostValid(vhost))
 		{
@@ -146,6 +160,7 @@ class HSNetHost : public Module
 	{
 		Configuration::Block block = conf.GetModule(this);
 		setifnone = block.Get<bool>("setifnone", "false");
+		hashprefix = block.Get<Anope::string>("hashprefix", "");
 		prefix = block.Get<Anope::string>("prefix", "");
 		suffix = block.Get<Anope::string>("suffix", "");
 	}
