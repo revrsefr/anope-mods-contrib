@@ -19,7 +19,6 @@
 * Option can be one of PROTECT (alias: KILL), MESSAGE, AUTOOP, PRIVATE, and CHANSTATS
 * Available params:
 *  - PROTECT: ON, OFF, or a delay in seconds
-*  - KILL (alias): ON, OFF, QUICK (= min protect delay), IMMED (= 0s if allowed)
 *  - MESSAGE/AUTOOP/PRIVATE/CHANSTATS: ON or OFF
 * --------------------------------------------------------------
 * Configuration: nickserv.conf
@@ -41,7 +40,7 @@ public:
 
     void Execute(CommandSource &source, const std::vector<Anope::string> &params) override
     {
-        const Anope::string &option = params[0]; // Our SET option, Kill, AutoOP, etc
+        const Anope::string &option = params[0]; // Our SET option, Protect, AutoOP, etc
         const Anope::string &param = params[1];  // Setting for the above option - on/off
         int count = 0;
 
@@ -55,7 +54,7 @@ public:
             this->SendSyntax(source);
             source.Reply(_("Type \002/msg %s HELP MASSSET\002 for more information."), source.service->nick.c_str());
         }
-        else if (option.equals_ci("KILL") || option.equals_ci("PROTECT"))
+        else if (option.equals_ci("PROTECT") || option.equals_ci("KILL"))
         {
             if (Config->GetModule("nickserv").Get<bool>("nonicknameownership"))
             {
@@ -67,7 +66,7 @@ public:
             const auto minprotect = block.Get<time_t>("minprotect", "10s");
             const auto maxprotect = block.Get<time_t>("maxprotect", "10m");
 
-            auto ApplyProtect = [&](NickCore *nc, const Anope::string &why, bool enable, const time_t *delay)
+            auto ApplyProtect = [&](NickCore *nc, bool enable, const time_t *delay)
             {
                 if (enable)
                 {
@@ -96,7 +95,7 @@ public:
                     if (MOD_RESULT == EVENT_STOP)
                         return;
 
-                    ApplyProtect(nc, "enable", true, nullptr);
+                    ApplyProtect(nc, true, nullptr);
                 }
                 Log(source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to enable protection for " << count << " users";
                 source.Reply(_("Successfully enabled \002protection\002 for \002%d\002 users."), count);
@@ -113,67 +112,17 @@ public:
                     if (MOD_RESULT == EVENT_STOP)
                         return;
 
-                    ApplyProtect(nc, "disable", false, nullptr);
+                    ApplyProtect(nc, false, nullptr);
                 }
                 Log(source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to disable protection for " << count << " users";
                 source.Reply(_("Successfully disabled \002protection\002 for \002%d\002 users."), count);
-            }
-            else if (param.equals_ci("QUICK") && option.equals_ci("KILL"))
-            {
-                const time_t delay = minprotect;
-                for (nickcore_map::const_iterator it = NickCoreList->begin(), it_end = NickCoreList->end(); it != it_end; ++it)
-                {
-                    NickCore *nc = it->second;
-                    count++;
-
-                    EventReturn MOD_RESULT;
-                    FOREACH_RESULT(OnSetNickOption, MOD_RESULT, (source, this, nc, param));
-                    if (MOD_RESULT == EVENT_STOP)
-                        return;
-
-                    ApplyProtect(nc, "enable (quick)", true, &delay);
-                }
-                Log(source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to enable protection (quick) for " << count << " users";
-                source.Reply(_("Successfully enabled \002quick protection\002 for \002%d\002 users."), count);
-            }
-            else if (param.equals_ci("IMMED") && option.equals_ci("KILL"))
-            {
-                if (!Config->GetModule(this->owner).Get<bool>("allowkillimmed"))
-                {
-                    source.Reply(_("The \002IMMED\002 option is not available on this network."));
-                    return;
-                }
-
-                const time_t delay = 0;
-                if (delay < minprotect || delay > maxprotect)
-                {
-                    source.Reply(_("The \002IMMED\002 option is not available because protection delay must be between %s and %s."),
-                        Anope::Duration(minprotect, source.GetAccount()).c_str(),
-                        Anope::Duration(maxprotect, source.GetAccount()).c_str());
-                    return;
-                }
-
-                for (nickcore_map::const_iterator it = NickCoreList->begin(), it_end = NickCoreList->end(); it != it_end; ++it)
-                {
-                    NickCore *nc = it->second;
-                    count++;
-
-                    EventReturn MOD_RESULT;
-                    FOREACH_RESULT(OnSetNickOption, MOD_RESULT, (source, this, nc, param));
-                    if (MOD_RESULT == EVENT_STOP)
-                        return;
-
-                    ApplyProtect(nc, "enable (immed)", true, &delay);
-                }
-                Log(source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to enable protection (immed) for " << count << " users";
-                source.Reply(_("Successfully enabled \002immediate protection\002 for \002%d\002 users."), count);
             }
             else
             {
                 auto iparam = Anope::TryConvert<time_t>(param);
                 if (!iparam)
                 {
-                    source.Reply(_("Syntax: \002MASSSET PROTECT \037on|off|delay\037\002"));
+                    source.Reply(_("Syntax: \002MASSSET PROTECT|KILL \037on|off|delay\037\002"));
                     return;
                 }
 
@@ -195,7 +144,7 @@ public:
                     if (MOD_RESULT == EVENT_STOP)
                         return;
 
-                    ApplyProtect(nc, "enable (delayed)", true, &*iparam);
+                    ApplyProtect(nc, true, &*iparam);
                 }
                 Log(source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to enable protection (delay " << *iparam << "s) for " << count << " users";
                 source.Reply(_("Successfully enabled \002protection\002 (delay %lu seconds) for \002%d\002 users."), *iparam, count);
@@ -384,7 +333,7 @@ public:
         return;
     }
 
-    bool OnHelp(CommandSource &source, const Anope::string &subcommand) override
+    bool OnHelp(CommandSource &source, const Anope::string &) override
     {
         this->SendSyntax(source);
         source.Reply(" ");
