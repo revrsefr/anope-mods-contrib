@@ -188,7 +188,7 @@ private:
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-            curl_easy_setopt(curl, CURLOPT_USERAGENT, "Anope-m_youtube/2.1");
+            curl_easy_setopt(curl, CURLOPT_USERAGENT, "Anope-m_youtube/1.0");
 
             std::string response_string;
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
