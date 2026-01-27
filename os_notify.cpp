@@ -891,7 +891,7 @@ class CommandOSNotify : public Command
 		return true;
 	}
 
-	void OnSyntaxError(CommandSource &source, const Anope::string &subcommand)
+	void OnSyntaxError(CommandSource &source, const Anope::string &subcommand) override
 	{
 		if (subcommand.equals_ci("ADD"))
 			source.Reply("ADD +\037expiry\037 \037flags\037 \037mask\037 [:]\037reason\037");
