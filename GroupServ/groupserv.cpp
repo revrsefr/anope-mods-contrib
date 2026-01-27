@@ -589,7 +589,7 @@ public:
 		: Command(creator, "groupserv/vhost", 1, 2)
 		, gs(core)
 	{
-		this->SetDesc(_("Activate or remove a group vhost (requires +v)"));
+		this->SetDesc(_("Activate or remove a group vhost (requires +v, supports $account/$group)"));
 		this->SetSyntax(_("<!group> [OFF]"));
 		this->AllowUnregistered(true);
 	}
@@ -648,12 +648,19 @@ public:
 		if (!this->gs.GetGroupVHost(groupname, gvhost) || gvhost.empty())
 		{
 			this->gs.ReplyF(source, "No group vhost is set for %s.", groupname.c_str());
-			this->gs.Reply(source, "Set one with: /msg GroupServ SET <!group> VHOST <hostmask>");
+			this->gs.Reply(source, "Set one with: /msg GroupServ SET <!group> VHOST <hostmask>  (supports $account/$group)");
 			return;
 		}
 
+		Anope::string expanded = gvhost;
+		expanded = expanded.replace_all_cs("$account", source.GetAccount()->display);
+		Anope::string groupvar = groupname;
+		if (!groupvar.empty() && groupvar[0] == '!')
+			groupvar = groupvar.substr(1);
+		expanded = expanded.replace_all_cs("$group", groupvar);
+
 		Anope::string user, host;
-		if (!ParseHostMask(gvhost, user, host))
+		if (!ParseHostMask(expanded, user, host))
 		{
 			this->gs.Reply(source, "The group vhost is invalid. Ask a founder to re-set it.");
 			return;
@@ -666,16 +673,19 @@ public:
 		if (host.length() > IRCD->MaxHost)
 		{
 			source.Reply(HOST_SET_VHOST_TOO_LONG, IRCD->MaxHost);
+			this->gs.ReplyF(source, "Expanded vhost was: %s", expanded.c_str());
 			return;
 		}
 		if (!IRCD->IsHostValid(host))
 		{
 			source.Reply(HOST_SET_VHOST_ERROR);
+			this->gs.ReplyF(source, "Expanded vhost was: %s", expanded.c_str());
 			return;
 		}
 		if (!user.empty() && !IRCD->IsIdentValid(user))
 		{
 			source.Reply(HOST_SET_VIDENT_ERROR);
+			this->gs.ReplyF(source, "Expanded vhost was: %s", expanded.c_str());
 			return;
 		}
 

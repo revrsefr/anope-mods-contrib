@@ -1735,7 +1735,7 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 		v.trim();
 		if (v.empty())
 		{
-			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>");
+			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>  (supports $account/$group)");
 			return false;
 		}
 		if (v.equals_ci("OFF") || v.equals_ci("NONE"))
@@ -1749,7 +1749,7 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 		Anope::string user, host;
 		if (!ParseHostMask(v, user, host))
 		{
-			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>");
+			this->Reply(source, "Syntax: SET <!group> VHOST <hostmask|OFF>  (supports $account/$group)");
 			return false;
 		}
 		if (!IRCD || !IRCD->CanSetVHost)
@@ -1757,6 +1757,31 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 			this->Reply(source, "Your IRCd does not support vhosts.");
 			return false;
 		}
+
+		// Allow $account/$group templating (expanded at /msg GroupServ VHOST time).
+		// Any other $variables are rejected.
+		if (user.find('$') != Anope::string::npos || host.find('$') != Anope::string::npos)
+		{
+			const auto check_vars = [](const Anope::string& s) -> bool
+			{
+				Anope::string tmp = s;
+				tmp = tmp.replace_all_cs("$account", "");
+				tmp = tmp.replace_all_cs("$group", "");
+				return tmp.find('$') == Anope::string::npos;
+			};
+
+			if (!check_vars(user) || !check_vars(host))
+			{
+				this->Reply(source, "Only the $account and $group variables are supported in group vhosts.");
+				return false;
+			}
+
+			g->vhost = (!user.empty() ? user + "@" : "") + host;
+			this->SaveDB();
+			this->ReplyF(source, "VHost for %s set to %s.", g->name.c_str(), g->vhost.c_str());
+			return true;
+		}
+
 		if (!ValidateHostMask(source, user, host))
 			return false;
 
