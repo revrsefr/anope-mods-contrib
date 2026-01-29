@@ -44,6 +44,22 @@ Template variables:
 - `%t` expiry time
 - `%N` network name
 
+## HTML email formatting
+
+This module sends whatever you put in `*_message` as the email body.
+
+By default Anope sends plain text email. If you want HTML formatting (tables, colors, etc), set Anope mail to HTML:
+
+```conf
+mail {
+	content_type = "text/html; charset=UTF-8"
+}
+```
+
+Then you can use HTML in `ns_expiring_message`, `cs_expiring_message`, etc.
+
+Note: make sure you send valid HTML. For example, `<td>...</td>` should be inside a `<table><tr>...</tr></table>`; a bare `<td>` can render inconsistently across email clients.
+
 ## Mail prerequisites / troubleshooting
 
 Mail sending uses Anope's built-in mail system. For email notices to work you must have:
