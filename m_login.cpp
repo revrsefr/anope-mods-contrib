@@ -59,6 +59,15 @@ class NSLoginSvsnick final
         // After successful authentication always identify the user to the target account.
         source.GetUser()->Identify(na);
 
+        // If the requested nick is already being used by the requesting user,
+        // just identify them. Do not treat this as a recover/ghost.
+        if (u && u == source.GetUser())
+        {
+            Log(LOG_COMMAND, source, cmd) << "and identified to " << na->nick << " (" << na->nc->display << ")";
+            source.Reply(_("Password accepted - you are now recognized."));
+            return;
+        }
+
         if (!u)
         {
             if (IRCD->CanSVSNick)
@@ -152,13 +161,7 @@ class NSLoginSvsnick final
          const Anope::string &nick = params[0];
          const Anope::string &pass = params.size() > 1 ? params[1] : "";
  
-         User *user = User::Find(nick, true);
- 
-         if (user && source.GetUser() == user)
-         {
-             source.Reply(_("You can't %s yourself!"), source.command.lower().c_str());
-             return;
-         }
+        User *user = User::Find(nick, true);
  
          NickAlias *na = NickAlias::Find(nick);
  
