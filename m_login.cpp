@@ -161,8 +161,6 @@ class NSLoginSvsnick final
          const Anope::string &nick = params[0];
          const Anope::string &pass = params.size() > 1 ? params[1] : "";
  
-        User *user = User::Find(nick, true);
- 
          NickAlias *na = NickAlias::Find(nick);
  
          if (!na)
