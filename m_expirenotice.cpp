@@ -58,6 +58,7 @@ module
  */
 
 #include "module.h"
+#include "mail.h"
 #include "modules/memoserv/service.h"
 
 class ExpireNotice : public Module
@@ -119,13 +120,14 @@ class ExpireNotice : public Module
 
 			if (ns_notice_mail && !na->nc->email.empty())
 			{
-				Anope::string subject = Config->GetModule(this).Get<Anope::string>("ns_expiring_subject"),
-					message = Config->GetModule(this).Get<Anope::string>("ns_expiring_message");
+				Anope::string subject = Config->GetModule(this).Get<Anope::string>("ns_expiring_subject", "Nickname expiring"),
+					message = Config->GetModule(this).Get<Anope::string>("ns_expiring_message", "Your nickname %n will expire %t.\n%N IRC Administration");
 				message = message.replace_all_cs("%n", na->nick);
 				message = message.replace_all_cs("%t", Anope::strftime(expire_at, na->nc));
 				message = message.replace_all_cs("%N", networkname);
 
-				Mail::Send(na->nc, subject, message);
+				if (!Mail::Send(na->nc, subject, message))
+					Log(LOG_DEBUG) << "m_expirenotice: failed to send expiring mail to " << na->nc->display;
 			}
 			/* If the NickCore has more than one NickAlias (not all expiring right now), send a memo */
 			if (ns_notice_memo && (*na->nc->aliases).size() > 1 && !AllAliasesExpiring(na->nc))
@@ -152,12 +154,13 @@ class ExpireNotice : public Module
 
 		if (ns_notice_mail && !na->nc->email.empty())
 		{
-			Anope::string subject = Config->GetModule(this).Get<Anope::string>("ns_expired_subject"),
-				message = Config->GetModule(this).Get<Anope::string>("ns_expired_message");
+			Anope::string subject = Config->GetModule(this).Get<Anope::string>("ns_expired_subject", "Nickname expired"),
+				message = Config->GetModule(this).Get<Anope::string>("ns_expired_message", "Your nickname %n has expired.\n%N IRC Administration");
 			message = message.replace_all_cs("%n", na->nick);
 			message = message.replace_all_cs("%N", networkname);
 
-			Mail::Send(na->nc, subject, message);
+			if (!Mail::Send(na->nc, subject, message))
+				Log(LOG_DEBUG) << "m_expirenotice: failed to send expired mail to " << na->nc->display;
 		}
 		/* If the NickCore has more than one NickAlias (not all expiring right now), send a memo */
 		if (ns_notice_memo && (*na->nc->aliases).size() > 1 && !AllAliasesExpiring(na->nc))
@@ -214,8 +217,8 @@ class ExpireNotice : public Module
 
 			if (cs_notice_mail)
 			{
-				Anope::string subject = Config->GetModule(this).Get<Anope::string>("cs_expiring_subject"),
-					base_message = Config->GetModule(this).Get<Anope::string>("cs_expiring_message");
+				Anope::string subject = Config->GetModule(this).Get<Anope::string>("cs_expiring_subject", "Channel expiring"),
+					base_message = Config->GetModule(this).Get<Anope::string>("cs_expiring_message", "Your channel %c will expire %t.\n%N IRC Administration");
 				base_message = base_message.replace_all_cs("%c", ci->name);
 				base_message = base_message.replace_all_cs("%N", networkname);
 
@@ -224,14 +227,16 @@ class ExpireNotice : public Module
 					Anope::string message = base_message;
 					message = message.replace_all_cs("%t", Anope::strftime(expire_at, founder));
 
-					Mail::Send(founder, subject, message);
+					if (!Mail::Send(founder, subject, message))
+						Log(LOG_DEBUG) << "m_expirenotice: failed to send channel expiring mail to " << founder->display;
 				}
 				if (successor && !successor->email.empty())
 				{
 					Anope::string message = base_message;
 					message = message.replace_all_cs("%t", Anope::strftime(expire_at, successor));
 
-					Mail::Send(successor, subject, message);
+					if (!Mail::Send(successor, subject, message))
+						Log(LOG_DEBUG) << "m_expirenotice: failed to send channel expiring mail to " << successor->display;
 				}
 			}
 			if (cs_notice_memo)
@@ -268,15 +273,21 @@ class ExpireNotice : public Module
 
 		if (cs_notice_mail)
 		{
-			Anope::string subject = Config->GetModule(this).Get<Anope::string>("cs_expired_subject"),
-				message = Config->GetModule(this).Get<Anope::string>("cs_expired_message");
+			Anope::string subject = Config->GetModule(this).Get<Anope::string>("cs_expired_subject", "Channel expired"),
+				message = Config->GetModule(this).Get<Anope::string>("cs_expired_message", "Your channel %c has expired.\n%N IRC Administration");
 			message = message.replace_all_cs("%c", ci->name);
 			message = message.replace_all_cs("%N", networkname);
 
 			if (founder && !founder->email.empty())
-				Mail::Send(founder, subject, message);
+			{
+				if (!Mail::Send(founder, subject, message))
+					Log(LOG_DEBUG) << "m_expirenotice: failed to send channel expired mail to " << founder->display;
+			}
 			if (successor && !successor->email.empty())
-				Mail::Send(successor, subject, message);
+			{
+				if (!Mail::Send(successor, subject, message))
+					Log(LOG_DEBUG) << "m_expirenotice: failed to send channel expired mail to " << successor->display;
+			}
 		}
 		if (cs_notice_memo)
 		{
@@ -310,7 +321,8 @@ class ExpireNotice : public Module
 		expiretimeout = Config->GetBlock("options").Get<time_t>("expiretimeout", "30m");
 		networkname = Config->GetBlock("networkinfo").Get<Anope::string>("networkname");
 
-		if (!Config->GetBlock("mail").Get<bool>("usemail"))
+		const auto &mail = Config->GetBlock("mail");
+		if (!mail.Get<bool>("usemail") || mail.Get<const Anope::string>("sendfrom").empty())
 			ns_notice_mail = cs_notice_mail = false;
 		if (!MemoServ::service)
 			ns_notice_memo = cs_notice_memo = false;
