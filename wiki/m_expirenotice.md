@@ -43,3 +43,15 @@ Template variables:
 - `%c` channel
 - `%t` expiry time
 - `%N` network name
+
+## Mail prerequisites / troubleshooting
+
+Mail sending uses Anope's built-in mail system. For email notices to work you must have:
+
+- `mail { usemail = yes }` in your main Anope config
+- `mail { sendfrom = "..." }` set (required by Anope; if empty, Anope refuses to send)
+- The NickCore(s) receiving mail must have a non-empty email set
+
+If mail is enabled in this module (`ns_notice_mail` / `cs_notice_mail`) but Anope mail is not usable (e.g. `usemail` is off or `sendfrom` is missing), the module will automatically disable mail notices.
+
+As of the latest update, failed sends are logged at debug level when `Mail::Send(...)` returns false.
