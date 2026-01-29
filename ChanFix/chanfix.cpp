@@ -256,35 +256,6 @@ private:
 	Kind k;
 };
 
-class ChanFixDeferredSaveTimer final
-	: public Timer
-{
-	ChanFixCore& cf;
-
-public:
-	ChanFixDeferredSaveTimer(Module* creator, time_t timeout, bool dorepeat, ChanFixCore& core)
-		: Timer(creator, timeout, dorepeat)
-		, cf(core)
-	{
-	}
-
-	void Tick() override
-	{
-		if (!this->cf.LegacyImportNeedsSave())
-		{
-			delete this;
-			return;
-		}
-
-		if (!Me || !Me->IsSynced())
-			return;
-
-		this->cf.ClearLegacyImportNeedsSave();
-		Anope::SaveDatabases();
-		delete this;
-	}
-};
-
 class ChanFix final
 	: public Module
 {
@@ -344,15 +315,7 @@ public:
 		{
 			this->core.LegacyImportIfNeeded();
 			if (this->core.LegacyImportNeedsSave())
-			{
-				if (Me && Me->IsSynced())
-				{
-					this->core.ClearLegacyImportNeedsSave();
-					Anope::SaveDatabases();
-				}
-				else
-					new ChanFixDeferredSaveTimer(this, 1, true, this->core);
-			}
+				this->core.ScheduleDBSave();
 		}
 	}
 };

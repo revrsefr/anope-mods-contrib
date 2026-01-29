@@ -1,5 +1,7 @@
 #include "chanfix.h"
 
+#include "timers.h"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -187,6 +189,49 @@ ChanFixCore::ChanFixCore(Module* owner)
 
 ChanFixCore::~ChanFixCore()
 {
+	this->db_save_pending = false;
+	this->db_save_timer = nullptr;
+}
+
+class ChanFixCore::DeferredSaveTimer final
+	: public Timer
+{
+	ChanFixCore& cf;
+
+public:
+	DeferredSaveTimer(Module* owner, ChanFixCore& core, time_t seconds)
+		: Timer(owner, seconds, true)
+		, cf(core)
+	{
+	}
+
+	void Tick() override
+	{
+		// Nothing queued.
+		if (!this->cf.LegacyImportNeedsSave() && !this->cf.db_save_pending)
+			return;
+
+		// Avoid writing while not fully synced.
+		if (!Me || !Me->IsSynced())
+			return;
+
+		this->cf.db_save_pending = false;
+		this->cf.ClearLegacyImportNeedsSave();
+		Anope::SaveDatabases();
+	}
+};
+
+void ChanFixCore::ScheduleDBSave()
+{
+	if (Anope::ReadOnly)
+		return;
+
+	this->db_save_pending = true;
+	if (this->db_save_timer)
+		return;
+
+	// Coalesce writes: save once within ~5 seconds.
+	this->db_save_timer = new DeferredSaveTimer(this->module, *this, 5);
 }
 
 void ChanFixCore::LegacyImportIfNeeded()
@@ -316,7 +361,10 @@ void ChanFixCore::LegacyImportIfNeeded()
 	// the existing DB, and forcing a save can overwrite the main database file.
 	// We'll request a save later (after services are synced) from the module.
 	if (imported > 0)
+	{
 		this->legacy_import_needs_save = true;
+		this->ScheduleDBSave();
+	}
 
 	// Move the legacy file out of the way so we don't re-import.
 	const fs::path migrated = path.string() + ".migrated";
@@ -355,6 +403,7 @@ CFChannelData& ChanFixCore::GetOrCreateRecord(Channel* c)
 	rec->ts = c->created;
 	rec->lastupdate = Anope::CurTime;
 	rec->QueueUpdate();
+	this->ScheduleDBSave();
 	return *rec;
 }
 
@@ -780,7 +829,10 @@ void ChanFixCore::GatherTick()
 		}
 
 		if (dirty)
+		{
 			rec.QueueUpdate();
+			this->ScheduleDBSave();
+		}
 	}
 }
 
@@ -822,11 +874,15 @@ void ChanFixCore::ExpireTick()
 		if (keep)
 		{
 			if (dirty)
+			{
 				rec.QueueUpdate();
+				this->ScheduleDBSave();
+			}
 			continue;
 		}
 
 		delete recp;
+		this->ScheduleDBSave();
 	}
 }
 
@@ -886,7 +942,10 @@ void ChanFixCore::AutoFixTick()
 		}
 
 		if (dirty)
+		{
 			rec.QueueUpdate();
+			this->ScheduleDBSave();
+		}
 	}
 }
 
@@ -932,6 +991,7 @@ bool ChanFixCore::RequestFix(CommandSource& source, const Anope::string& chname)
 	rec.fix_requested = true;
 	rec.fix_started = 0;
 	rec.QueueUpdate();
+	this->ScheduleDBSave();
 	source.Reply("Fix request acknowledged for %s.", chname.c_str());
 	return true;
 }
@@ -991,6 +1051,7 @@ bool ChanFixCore::RequestFixFromChanServ(CommandSource& source, const Anope::str
 	rec.fix_requested = true;
 	rec.fix_started = 0;
 	rec.QueueUpdate();
+	this->ScheduleDBSave();
 	source.Reply("Fix request acknowledged for %s.", chname.c_str());
 	return true;
 }
@@ -1019,6 +1080,7 @@ bool ChanFixCore::SetMark(CommandSource& source, const Anope::string& chname, bo
 		rec.mark_reason = reason;
 		rec.mark_time = Anope::CurTime;
 		rec.QueueUpdate();
+		this->ScheduleDBSave();
 		source.Reply("%s is now marked.", chname.c_str());
 		return true;
 	}
@@ -1028,6 +1090,7 @@ bool ChanFixCore::SetMark(CommandSource& source, const Anope::string& chname, bo
 	rec.mark_reason.clear();
 	rec.mark_time = 0;
 	rec.QueueUpdate();
+	this->ScheduleDBSave();
 	source.Reply("%s is now unmarked.", chname.c_str());
 	return true;
 }
@@ -1056,6 +1119,7 @@ bool ChanFixCore::SetNoFix(CommandSource& source, const Anope::string& chname, b
 		rec.nofix_reason = reason;
 		rec.nofix_time = Anope::CurTime;
 		rec.QueueUpdate();
+		this->ScheduleDBSave();
 		source.Reply("%s is now set to NOFIX.", chname.c_str());
 		return true;
 	}
@@ -1065,6 +1129,7 @@ bool ChanFixCore::SetNoFix(CommandSource& source, const Anope::string& chname, b
 	rec.nofix_reason.clear();
 	rec.nofix_time = 0;
 	rec.QueueUpdate();
+	this->ScheduleDBSave();
 	source.Reply("%s is no longer set to NOFIX.", chname.c_str());
 	return true;
 }

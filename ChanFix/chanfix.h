@@ -82,6 +82,8 @@ public:
 	bool LegacyImportNeedsSave() const { return this->legacy_import_needs_save; }
 	void ClearLegacyImportNeedsSave() { this->legacy_import_needs_save = false; }
 
+	void ScheduleDBSave();
+
 	bool IsAdmin(CommandSource& source) const;
 	bool IsAuspex(CommandSource& source) const;
 
@@ -99,9 +101,13 @@ public:
 	time_t GetAutofixInterval() const { return this->autofix_interval; }
 
 private:
+	class DeferredSaveTimer;
+
 	Module* module;
 	BotInfo* chanfix = nullptr;
 	bool legacy_import_needs_save = false;
+	bool db_save_pending = false;
+	DeferredSaveTimer* db_save_timer = nullptr;
 
 	bool do_autofix = false;
 	bool join_to_fix = false;
