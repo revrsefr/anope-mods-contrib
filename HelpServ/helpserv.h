@@ -389,4 +389,3 @@ public:
 	friend class CommandHelpServUnwait;
 	friend class CommandHelpServNotify;
 };
-

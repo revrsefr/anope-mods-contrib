@@ -880,19 +880,11 @@ public:
 	void Tick() override
 	{
 		if (!this->hs.db_save_pending)
-		{
-			this->hs.db_save_timer = nullptr;
-			delete this;
 			return;
-		}
-
 		if (!Me || !Me->IsSynced())
 			return;
-
 		this->hs.db_save_pending = false;
 		Anope::SaveDatabases();
-		this->hs.db_save_timer = nullptr;
-		delete this;
 	}
 };
 
@@ -906,6 +898,7 @@ void HelpServCore::ScheduleDBSave()
 	// Coalesce writes: save once within ~5 seconds.
 	this->db_save_timer = new HelpServDeferredSaveTimer(*this, 5);
 }
+
 
 void HelpServCore::MarkStateChanged()
 {
@@ -1251,4 +1244,3 @@ EventReturn HelpServCore::OnPreHelp(CommandSource& source, const std::vector<Ano
 	this->Reply(source, "I don't know that topic. Try: \002HELP\002 or \002SEARCH <words>\002");
 	return EVENT_STOP;
 }
-
