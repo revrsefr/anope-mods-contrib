@@ -12,6 +12,7 @@ Important:
 - Expires/decays scores over time so old history fades out.
 - Manual fix requests (`CHANFIX #channel`) for staff.
 - Optional autofix loop (disabled by default).
+- Optional takeover reversal: deop low-history ops during a fix.
 - Per-channel controls:
   - `NOFIX` — prevent ChanFix from acting on a channel
   - `MARK` — annotate a channel with a note for staff
@@ -55,6 +56,12 @@ module
   autofix = no
   join_to_fix = no
 
+  # Optional: takeover reversal
+  # If enabled, ChanFix will also remove +o from users who do not meet the
+  # current score threshold during a fix. This is more aggressive and can deop
+  # legitimate new users who lack history.
+  deop_below_threshold_on_fix = no
+
   # Algorithm
   op_threshold = 3
   min_fix_score = 12
@@ -95,6 +102,8 @@ ChanFix only considers channels that are both:
 - **unregistered** (no `ChannelInfo` entry)
 
 Then it uses the score history to decide which users are plausible operators, and attempts to `+o` them.
+
+If `deop_below_threshold_on_fix` is enabled, ChanFix will also attempt to `-o` users who are currently opped but do not meet the score threshold, as long as at least one "good" op (above threshold) will remain after the operation.
 
 ## Persistence (flatfile DB)
 
