@@ -137,9 +137,13 @@ void CommandHelpServHelpMe::Execute(CommandSource& source, const std::vector<Ano
 {
 	if (!this->hs.HelpServ)
 		return;
+	if (!this->hs.state)
+		return;
 
-	++this->hs.helpme_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->helpme_requests;
+	this->hs.MarkStateChanged();
+
+	this->hs.PruneCooldownMaps(Anope::CurTime);
 
 	Anope::string topic = params[0];
 	topic.trim();
@@ -154,7 +158,7 @@ void CommandHelpServHelpMe::Execute(CommandSource& source, const std::vector<Ano
 
 	const auto key = this->hs.GetRequesterKey(source);
 	const auto now = Anope::CurTime;
-	auto& last = this->hs.last_helpme_by_key[key];
+	auto& last = this->hs.state->last_helpme_by_key[key];
 	if (last && now - last < this->hs.helpme_cooldown)
 	{
 		this->hs.ReplyF(source, "Please wait %lld seconds before using \002HELPME\002 again.",
@@ -162,6 +166,7 @@ void CommandHelpServHelpMe::Execute(CommandSource& source, const std::vector<Ano
 		return;
 	}
 	last = now;
+	this->hs.MarkStateChanged();
 
 	Anope::string who = source.GetNick();
 	if (source.GetUser())
@@ -199,9 +204,13 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 {
 	if (!this->hs.HelpServ)
 		return;
+	if (!this->hs.state)
+		return;
 
-	++this->hs.request_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->request_requests;
+	this->hs.MarkStateChanged();
+
+	this->hs.PruneCooldownMaps(Anope::CurTime);
 
 	this->hs.PruneExpiredTickets();
 
@@ -224,7 +233,7 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 
 	const auto key = this->hs.GetRequesterKey(source);
 	const auto now = Anope::CurTime;
-	auto& last = this->hs.last_request_by_key[key];
+	auto& last = this->hs.state->last_request_by_key[key];
 	if (last && now - last < this->hs.request_cooldown)
 	{
 		this->hs.ReplyF(source, "Please wait %lld seconds before creating another ticket.",
@@ -232,8 +241,9 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 		return;
 	}
 	last = now;
+	this->hs.MarkStateChanged();
 
-		const auto account_key = HelpServCore::NormalizeTopic(source.GetAccount()->display);
+	const auto account_key = HelpServCore::NormalizeTopic(source.GetAccount()->display);
 	auto* existing = this->hs.FindOpenTicketByAccountKey(account_key);
 	if (existing)
 	{
@@ -247,7 +257,7 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 		if (source.GetUser())
 			existing->requester = source.GetUser()->GetDisplayedMask();
 		existing->updated = now;
-		this->hs.SaveTicketsToFile();
+		this->hs.MarkTicketChanged(existing);
 		this->hs.ReplyF(source, "Your ticket has been updated (\002#%llu\002).", static_cast<unsigned long long>(existing->id));
 
 		Anope::string who = source.GetNick();
@@ -262,27 +272,25 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 		return;
 	}
 
-	HelpServCore::Ticket t;
-	t.id = this->hs.next_ticket_id++;
-	t.account = source.GetAccount()->display;
-	t.nick = source.GetNick();
-	t.requester = source.GetNick();
-	t.topic = topic;
-	t.message = msg;
+	const uint64_t id = this->hs.state->next_ticket_id++;
+	this->hs.MarkStateChanged();
+	auto* t = new HelpServTicket(id);
+	t->account = source.GetAccount()->display;
+	t->nick = source.GetNick();
+	t->requester = source.GetNick();
+	t->topic = topic;
+	t->message = msg;
 	if (source.GetUser())
-		t.requester = source.GetUser()->GetDisplayedMask();
-	t.created = now;
-	t.updated = now;
-
-	this->hs.tickets_by_id[t.id] = t;
-		this->hs.open_ticket_by_account[HelpServCore::NormalizeTopic(t.account)] = t.id;
-	this->hs.SaveTicketsToFile();
+		t->requester = source.GetUser()->GetDisplayedMask();
+	t->created = now;
+	t->updated = now;
+	this->hs.MarkTicketChanged(t);
 
 	Anope::string oper = source.GetNick();
 	if (source.GetUser())
 		oper = source.GetUser()->GetDisplayedMask();
 	this->hs.ReplyF(source, "Your ticket has been opened (#%llu) about %s.",
-		static_cast<unsigned long long>(t.id), topic.c_str());
+		static_cast<unsigned long long>(t->id), topic.c_str());
 	this->hs.ReplyF(source, "Opened by: %s", oper.c_str());
 
 	Anope::string who = source.GetNick();
@@ -290,9 +298,9 @@ void CommandHelpServRequest::Execute(CommandSource& source, const std::vector<An
 		who = source.GetUser()->GetDisplayedMask();
 	Anope::string staff_msg;
 	if (msg.empty())
-		staff_msg = Anope::Format("REQUEST: %s needs help about \002%s\002. (ticket \002#%llu\002)", who.c_str(), topic.c_str(), static_cast<unsigned long long>(t.id));
+		staff_msg = Anope::Format("REQUEST: %s needs help about \002%s\002. (ticket \002#%llu\002)", who.c_str(), topic.c_str(), static_cast<unsigned long long>(t->id));
 	else
-		staff_msg = Anope::Format("REQUEST: %s needs help about \002%s\002: %s (ticket \002#%llu\002)", who.c_str(), topic.c_str(), msg.c_str(), static_cast<unsigned long long>(t.id));
+		staff_msg = Anope::Format("REQUEST: %s needs help about \002%s\002: %s (ticket \002#%llu\002)", who.c_str(), topic.c_str(), msg.c_str(), static_cast<unsigned long long>(t->id));
 	this->hs.NotifyTicketEvent(staff_msg);
 }
 
@@ -320,9 +328,11 @@ void CommandHelpServCancel::Execute(CommandSource& source, const std::vector<Ano
 		this->hs.Reply(source, "You must be identified to cancel a ticket.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.cancel_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->cancel_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -334,9 +344,8 @@ void CommandHelpServCancel::Execute(CommandSource& source, const std::vector<Ano
 	}
 
 	const auto id = t->id;
-		this->hs.open_ticket_by_account.erase(HelpServCore::NormalizeTopic(t->account));
-	this->hs.tickets_by_id.erase(id);
-	this->hs.SaveTicketsToFile();
+	delete t;
+	this->hs.ScheduleDBSave();
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: cancelled \002#%llu\002 by %s", static_cast<unsigned long long>(id), source.GetNick().c_str()));
 	this->hs.Reply(source, "Your ticket has been cancelled.");
 }
@@ -365,26 +374,25 @@ void CommandHelpServList::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.list_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->list_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
 	Anope::string filter = params.empty() ? "" : params[0];
 	filter.trim();
 
-	if (this->hs.tickets_by_id.empty())
-	{
-		this->hs.Reply(source, "No open tickets.");
-		return;
-	}
-
 	const bool include_waiting = true;
 	auto tickets = this->hs.GetSortedTickets(filter, include_waiting);
 	if (tickets.empty())
 	{
-		this->hs.Reply(source, "No matching tickets.");
+		if (filter.empty())
+			this->hs.Reply(source, "No open tickets.");
+		else
+			this->hs.Reply(source, "No matching tickets.");
 		return;
 	}
 
@@ -449,9 +457,11 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.close_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->close_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -466,7 +476,7 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 		return;
 	}
 
-	HelpServCore::Ticket* t = nullptr;
+	HelpServTicket* t = nullptr;
 	uint64_t by_id = 0;
 	if (HelpServCore::TryParseTicketId(who, by_id))
 		t = this->hs.FindTicketById(by_id);
@@ -481,10 +491,8 @@ void CommandHelpServClose::Execute(CommandSource& source, const std::vector<Anop
 	const auto id = t->id;
 	const auto account = t->account;
 	const auto nick = t->nick;
-
-		this->hs.open_ticket_by_account.erase(HelpServCore::NormalizeTopic(account));
-	this->hs.tickets_by_id.erase(id);
-	this->hs.SaveTicketsToFile();
+	delete t;
+	this->hs.ScheduleDBSave();
 
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: closed \002#%llu\002 by %s (account \002%s\002): %s",
 		static_cast<unsigned long long>(id), source.GetNick().c_str(), account.c_str(), reason.c_str()));
@@ -539,9 +547,11 @@ void CommandHelpServTake::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.take_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->take_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -561,7 +571,7 @@ void CommandHelpServTake::Execute(CommandSource& source, const std::vector<Anope
 
 	t->assigned = source.GetNick();
 	t->updated = Anope::CurTime;
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 claimed by \002%s\002", static_cast<unsigned long long>(id), source.GetNick().c_str()));
 
 	// Notify any online users identified to the account.
@@ -614,9 +624,11 @@ void CommandHelpServAssign::Execute(CommandSource& source, const std::vector<Ano
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.assign_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->assign_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -641,7 +653,7 @@ void CommandHelpServAssign::Execute(CommandSource& source, const std::vector<Ano
 
 	t->assigned = assignee;
 	t->updated = Anope::CurTime;
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 
 	if (assignee.empty())
 		this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 unassigned by \002%s\002", static_cast<unsigned long long>(id), source.GetNick().c_str()));
@@ -675,9 +687,11 @@ void CommandHelpServNote::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.note_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->note_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -707,7 +721,7 @@ void CommandHelpServNote::Execute(CommandSource& source, const std::vector<Anope
 	Anope::string note = Anope::Format("[%s] %s: %s", ts.c_str(), source.GetNick().c_str(), text.c_str());
 	t->notes.push_back(note);
 	t->updated = Anope::CurTime;
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 noted by \002%s\002", static_cast<unsigned long long>(id), source.GetNick().c_str()));
 	this->hs.ReplyF(source, "Added note to ticket \002#%llu\002.", static_cast<unsigned long long>(id));
 }
@@ -736,9 +750,11 @@ void CommandHelpServView::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.view_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->view_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -809,9 +825,11 @@ void CommandHelpServNext::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.next_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->next_requests;
+	this->hs.MarkStateChanged();
 
 	this->hs.PruneExpiredTickets();
 
@@ -869,9 +887,11 @@ void CommandHelpServPriority::Execute(CommandSource& source, const std::vector<A
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.priority_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->priority_requests;
+	this->hs.MarkStateChanged();
 
 	if (params.size() < 2)
 	{
@@ -905,7 +925,7 @@ void CommandHelpServPriority::Execute(CommandSource& source, const std::vector<A
 
 	t->priority = HelpServCore::ClampPriority(pri);
 	t->updated = Anope::CurTime;
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 priority set to %s by %s",
 		static_cast<unsigned long long>(id),
 		HelpServCore::PriorityString(t->priority).c_str(),
@@ -939,9 +959,11 @@ void CommandHelpServWait::Execute(CommandSource& source, const std::vector<Anope
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.wait_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->wait_requests;
+	this->hs.MarkStateChanged();
 
 	if (params.empty())
 	{
@@ -977,7 +999,7 @@ void CommandHelpServWait::Execute(CommandSource& source, const std::vector<Anope
 		Anope::string note = Anope::Format("[%s] %s: waiting (%s)", ts.c_str(), source.GetNick().c_str(), reason.c_str());
 		t->notes.push_back(note);
 	}
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 marked waiting by %s",
 		static_cast<unsigned long long>(id), source.GetNick().c_str()));
 	this->hs.ReplyF(source, "Ticket \002#%llu\002 marked as \002waiting\002.", static_cast<unsigned long long>(id));
@@ -1007,9 +1029,11 @@ void CommandHelpServUnwait::Execute(CommandSource& source, const std::vector<Ano
 		this->hs.Reply(source, "Access denied.");
 		return;
 	}
+	if (!this->hs.state)
+		return;
 
-	++this->hs.unwait_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->unwait_requests;
+	this->hs.MarkStateChanged();
 
 	if (params.empty())
 	{
@@ -1037,7 +1061,7 @@ void CommandHelpServUnwait::Execute(CommandSource& source, const std::vector<Ano
 	t->state = "open";
 	t->wait_reason.clear();
 	t->updated = Anope::CurTime;
-	this->hs.SaveTicketsToFile();
+	this->hs.MarkTicketChanged(t);
 	this->hs.NotifyTicketEvent(Anope::Format("TICKET: \002#%llu\002 un-waited by %s",
 		static_cast<unsigned long long>(id), source.GetNick().c_str()));
 	this->hs.ReplyF(source, "Ticket \002#%llu\002 marked as \002open\002.", static_cast<unsigned long long>(id));
@@ -1064,9 +1088,11 @@ void CommandHelpServNotify::Execute(CommandSource& source, const std::vector<Ano
 {
 	if (!this->hs.HelpServ)
 		return;
+	if (!this->hs.state)
+		return;
 
-	++this->hs.notify_requests;
-	this->hs.MaybeSaveStats();
+	++this->hs.state->notify_requests;
+	this->hs.MarkStateChanged();
 
 	if (!source.HasPriv(this->hs.notify_priv))
 	{

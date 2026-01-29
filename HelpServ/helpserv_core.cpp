@@ -1,67 +1,303 @@
 #include "helpserv.h"
+#include "timers.h"
 
 #include <algorithm>
 #include <cstdarg>
-#include <filesystem>
-#include <fstream>
-#include <system_error>
 #include <utility>
 
-namespace fs = std::filesystem;
+using helpserv_ticket_map = Anope::unordered_map<HelpServTicket *>;
+static Serialize::Checker<helpserv_ticket_map> HelpServTicketList(HELPSERV_TICKET_DATA_TYPE);
+
+using helpserv_state_map = Anope::unordered_map<HelpServState *>;
+static Serialize::Checker<helpserv_state_map> HelpServStateList(HELPSERV_STATE_DATA_TYPE);
+
+static Anope::string TicketKey(uint64_t id)
+{
+	return Anope::ToString(id);
+}
+
+static int TicketClampPriority(int p)
+{
+	if (p < 0)
+		return 0;
+	if (p > 2)
+		return 2;
+	return p;
+}
+
+static Anope::string TicketNormalizeState(const Anope::string& state)
+{
+	if (state.equals_ci("waiting") || state.equals_ci("wait"))
+		return "waiting";
+	return "open";
+}
+
+HelpServTicket::HelpServTicket(uint64_t ticket_id)
+	: Serializable(HELPSERV_TICKET_DATA_TYPE)
+{
+	if (!ticket_id)
+		throw ModuleException("HelpServ: ticket id must be non-zero");
+	this->id = ticket_id;
+	this->key = TicketKey(ticket_id);
+	HelpServTicketList->insert_or_assign(this->key, this);
+}
+
+HelpServTicket::~HelpServTicket()
+{
+	HelpServTicketList->erase(this->key);
+}
+
+HelpServState::HelpServState()
+	: Serializable(HELPSERV_STATE_DATA_TYPE)
+{
+	HelpServStateList->insert_or_assign(this->name, this);
+}
+
+HelpServState::~HelpServState()
+{
+	HelpServStateList->erase(this->name);
+}
+
+HelpServTicketDataType::HelpServTicketDataType(Module* owner)
+	: Serialize::Type(HELPSERV_TICKET_DATA_TYPE, owner)
+{
+}
+
+void HelpServTicketDataType::Serialize(Serializable* obj, Serialize::Data& data) const
+{
+	const auto* t = static_cast<const HelpServTicket*>(obj);
+
+	data.Store("id", static_cast<uint64_t>(t->id));
+	data.Store("account", t->account);
+	data.Store("nick", t->nick);
+	data.Store("requester", t->requester);
+	data.Store("topic", t->topic);
+	data.Store("message", t->message);
+	data.Store("priority", static_cast<int64_t>(TicketClampPriority(t->priority)));
+	data.Store("state", TicketNormalizeState(t->state));
+	data.Store("wait_reason", t->wait_reason);
+	data.Store("assigned", t->assigned);
+	data.Store("created", static_cast<int64_t>(t->created));
+	data.Store("updated", static_cast<int64_t>(t->updated));
+
+	data.Store("notecount", static_cast<uint64_t>(t->notes.size()));
+	for (uint64_t i = 0; i < static_cast<uint64_t>(t->notes.size()); ++i)
+	{
+		const Anope::string prefix = "note" + Anope::ToString(i) + ".";
+		data.Store(prefix + "text", t->notes[static_cast<size_t>(i)]);
+	}
+}
+
+Serializable* HelpServTicketDataType::Unserialize(Serializable* obj, Serialize::Data& data) const
+{
+	uint64_t id = 0;
+	data["id"] >> id;
+	if (!id)
+		return nullptr;
+
+	HelpServTicket* t = nullptr;
+	if (obj)
+	{
+		t = anope_dynamic_static_cast<HelpServTicket*>(obj);
+	}
+	else
+	{
+		const Anope::string key = TicketKey(id);
+		auto it = HelpServTicketList->find(key);
+		if (it != HelpServTicketList->end())
+			t = it->second;
+		if (!t)
+			t = new HelpServTicket(id);
+	}
+
+	t->id = id;
+	t->key = TicketKey(id);
+	data["account"] >> t->account;
+	data["nick"] >> t->nick;
+	data["requester"] >> t->requester;
+	data["topic"] >> t->topic;
+	data["message"] >> t->message;
+	data["priority"] >> t->priority;
+	t->priority = TicketClampPriority(t->priority);
+	data["state"] >> t->state;
+	t->state = TicketNormalizeState(t->state);
+	data["wait_reason"] >> t->wait_reason;
+	data["assigned"] >> t->assigned;
+	data["created"] >> t->created;
+	data["updated"] >> t->updated;
+
+	uint64_t notecount = 0;
+	data["notecount"] >> notecount;
+	t->notes.clear();
+	t->notes.resize(static_cast<size_t>(notecount));
+	for (uint64_t i = 0; i < notecount; ++i)
+	{
+		const Anope::string prefix = "note" + Anope::ToString(i) + ".";
+		data[prefix + "text"] >> t->notes[static_cast<size_t>(i)];
+	}
+
+	return t;
+}
+
+HelpServStateDataType::HelpServStateDataType(Module* owner)
+	: Serialize::Type(HELPSERV_STATE_DATA_TYPE, owner)
+{
+}
+
+void HelpServStateDataType::Serialize(Serializable* obj, Serialize::Data& data) const
+{
+	const auto* st = static_cast<const HelpServState*>(obj);
+	data.Store("name", st->name);
+	data.Store("next_ticket_id", static_cast<uint64_t>(st->next_ticket_id));
+
+	data.Store("help_requests", static_cast<uint64_t>(st->help_requests));
+	data.Store("search_requests", static_cast<uint64_t>(st->search_requests));
+	data.Store("search_hits", static_cast<uint64_t>(st->search_hits));
+	data.Store("search_misses", static_cast<uint64_t>(st->search_misses));
+	data.Store("unknown_topics", static_cast<uint64_t>(st->unknown_topics));
+	data.Store("helpme_requests", static_cast<uint64_t>(st->helpme_requests));
+	data.Store("request_requests", static_cast<uint64_t>(st->request_requests));
+	data.Store("cancel_requests", static_cast<uint64_t>(st->cancel_requests));
+	data.Store("list_requests", static_cast<uint64_t>(st->list_requests));
+	data.Store("next_requests", static_cast<uint64_t>(st->next_requests));
+	data.Store("view_requests", static_cast<uint64_t>(st->view_requests));
+	data.Store("take_requests", static_cast<uint64_t>(st->take_requests));
+	data.Store("assign_requests", static_cast<uint64_t>(st->assign_requests));
+	data.Store("note_requests", static_cast<uint64_t>(st->note_requests));
+	data.Store("close_requests", static_cast<uint64_t>(st->close_requests));
+	data.Store("priority_requests", static_cast<uint64_t>(st->priority_requests));
+	data.Store("wait_requests", static_cast<uint64_t>(st->wait_requests));
+	data.Store("unwait_requests", static_cast<uint64_t>(st->unwait_requests));
+	data.Store("notify_requests", static_cast<uint64_t>(st->notify_requests));
+
+	data.Store("topiccount", static_cast<uint64_t>(st->topic_requests.size()));
+	uint64_t i = 0;
+	for (const auto& [topic, count] : st->topic_requests)
+	{
+		const Anope::string prefix = "topic" + Anope::ToString(i) + ".";
+		data.Store(prefix + "name", topic);
+		data.Store(prefix + "count", static_cast<uint64_t>(count));
+		++i;
+	}
+
+	data.Store("helpme_cooldown_count", static_cast<uint64_t>(st->last_helpme_by_key.size()));
+	i = 0;
+	for (const auto& it : st->last_helpme_by_key)
+	{
+		const Anope::string prefix = "helpme_cooldown" + Anope::ToString(i) + ".";
+		data.Store(prefix + "key", it.first);
+		data.Store(prefix + "ts", static_cast<int64_t>(it.second));
+		++i;
+	}
+
+	data.Store("request_cooldown_count", static_cast<uint64_t>(st->last_request_by_key.size()));
+	i = 0;
+	for (const auto& it : st->last_request_by_key)
+	{
+		const Anope::string prefix = "request_cooldown" + Anope::ToString(i) + ".";
+		data.Store(prefix + "key", it.first);
+		data.Store(prefix + "ts", static_cast<int64_t>(it.second));
+		++i;
+	}
+}
+
+Serializable* HelpServStateDataType::Unserialize(Serializable* obj, Serialize::Data& data) const
+{
+	Anope::string name;
+	data["name"] >> name;
+	if (name.empty())
+		name = "state";
+
+	HelpServState* st = nullptr;
+	if (obj)
+	{
+		st = anope_dynamic_static_cast<HelpServState*>(obj);
+	}
+	else
+	{
+		auto it = HelpServStateList->find(name);
+		if (it != HelpServStateList->end())
+			st = it->second;
+		if (!st)
+			st = new HelpServState();
+	}
+
+	st->name = name;
+	data["next_ticket_id"] >> st->next_ticket_id;
+
+	data["help_requests"] >> st->help_requests;
+	data["search_requests"] >> st->search_requests;
+	data["search_hits"] >> st->search_hits;
+	data["search_misses"] >> st->search_misses;
+	data["unknown_topics"] >> st->unknown_topics;
+	data["helpme_requests"] >> st->helpme_requests;
+	data["request_requests"] >> st->request_requests;
+	data["cancel_requests"] >> st->cancel_requests;
+	data["list_requests"] >> st->list_requests;
+	data["next_requests"] >> st->next_requests;
+	data["view_requests"] >> st->view_requests;
+	data["take_requests"] >> st->take_requests;
+	data["assign_requests"] >> st->assign_requests;
+	data["note_requests"] >> st->note_requests;
+	data["close_requests"] >> st->close_requests;
+	data["priority_requests"] >> st->priority_requests;
+	data["wait_requests"] >> st->wait_requests;
+	data["unwait_requests"] >> st->unwait_requests;
+	data["notify_requests"] >> st->notify_requests;
+
+	uint64_t topiccount = 0;
+	data["topiccount"] >> topiccount;
+	st->topic_requests.clear();
+	for (uint64_t idx = 0; idx < topiccount; ++idx)
+	{
+		const Anope::string prefix = "topic" + Anope::ToString(idx) + ".";
+		Anope::string topic;
+		uint64_t count = 0;
+		data[prefix + "name"] >> topic;
+		data[prefix + "count"] >> count;
+		if (!topic.empty())
+			st->topic_requests[topic] = count;
+	}
+
+	uint64_t hc = 0;
+	data["helpme_cooldown_count"] >> hc;
+	st->last_helpme_by_key.clear();
+	for (uint64_t idx = 0; idx < hc; ++idx)
+	{
+		const Anope::string prefix = "helpme_cooldown" + Anope::ToString(idx) + ".";
+		Anope::string k;
+		time_t ts = 0;
+		data[prefix + "key"] >> k;
+		data[prefix + "ts"] >> ts;
+		if (!k.empty() && ts > 0)
+			st->last_helpme_by_key[k] = ts;
+	}
+
+	uint64_t rc = 0;
+	data["request_cooldown_count"] >> rc;
+	st->last_request_by_key.clear();
+	for (uint64_t idx = 0; idx < rc; ++idx)
+	{
+		const Anope::string prefix = "request_cooldown" + Anope::ToString(idx) + ".";
+		Anope::string k;
+		time_t ts = 0;
+		data[prefix + "key"] >> k;
+		data[prefix + "ts"] >> ts;
+		if (!k.empty() && ts > 0)
+			st->last_request_by_key[k] = ts;
+	}
+
+	if (!st->next_ticket_id)
+		st->next_ticket_id = 1;
+
+	return st;
+}
 
 Anope::string HelpServCore::NormalizeTopic(const Anope::string& in)
 {
 	Anope::string out = in;
 	out.trim();
 	out = out.lower();
-	return out;
-}
-
-Anope::string HelpServCore::EscapeValue(const Anope::string& in)
-{
-	Anope::string out;
-	for (const char ch : in)
-	{
-		switch (ch)
-		{
-			case '\\': out += "\\\\"; break;
-			case '\n': out += "\\n"; break;
-			case '\r': break;
-			default: out += ch; break;
-		}
-	}
-	return out;
-}
-
-Anope::string HelpServCore::UnescapeValue(const Anope::string& in)
-{
-	Anope::string out;
-	for (size_t i = 0; i < in.length(); ++i)
-	{
-		const char ch = in[i];
-		if (ch != '\\' || i + 1 >= in.length())
-		{
-			out += ch;
-			continue;
-		}
-
-		const char next = in[i + 1];
-		if (next == 'n')
-		{
-			out += '\n';
-			++i;
-		}
-		else if (next == '\\')
-		{
-			out += '\\';
-			++i;
-		}
-		else
-		{
-			out += next;
-			++i;
-		}
-	}
 	return out;
 }
 
@@ -133,7 +369,7 @@ Anope::string HelpServCore::NormalizeState(const Anope::string& state)
 	return "open";
 }
 
-bool HelpServCore::TicketMatchesFilter(const Ticket& t, const Anope::string& filter)
+bool HelpServCore::TicketMatchesFilter(const HelpServTicket& t, const Anope::string& filter)
 {
 	if (filter.empty())
 		return true;
@@ -145,19 +381,22 @@ bool HelpServCore::TicketMatchesFilter(const Ticket& t, const Anope::string& fil
 	return false;
 }
 
-std::vector<HelpServCore::Ticket*> HelpServCore::GetSortedTickets(const Anope::string& filter, bool include_waiting)
+std::vector<HelpServTicket*> HelpServCore::GetSortedTickets(const Anope::string& filter, bool include_waiting)
 {
-	std::vector<Ticket*> out;
-	out.reserve(this->tickets_by_id.size());
-	for (auto& [_, t] : this->tickets_by_id)
+	std::vector<HelpServTicket*> out;
+	out.reserve(HelpServTicketList->size());
+	for (const auto& it : *HelpServTicketList)
 	{
-		if (!TicketMatchesFilter(t, filter))
+		HelpServTicket* t = it.second;
+		if (!t)
 			continue;
-		if (!include_waiting && NormalizeState(t.state).equals_ci("waiting"))
+		if (!TicketMatchesFilter(*t, filter))
 			continue;
-		out.push_back(&t);
+		if (!include_waiting && NormalizeState(t->state).equals_ci("waiting"))
+			continue;
+		out.push_back(t);
 	}
-	std::sort(out.begin(), out.end(), [](const Ticket* a, const Ticket* b) {
+	std::sort(out.begin(), out.end(), [](const HelpServTicket* a, const HelpServTicket* b) {
 		const int as = StateSortKey(a->state);
 		const int bs = StateSortKey(b->state);
 		if (as != bs)
@@ -298,6 +537,13 @@ bool HelpServCore::ContainsCaseInsensitive(const Anope::string& haystack, const 
 
 void HelpServCore::SendStats(CommandSource& source)
 {
+	auto* st = this->state;
+	if (!st)
+	{
+		this->Reply(source, "HelpServ state is not initialized.");
+		return;
+	}
+
 	size_t line_count = 0;
 	for (const auto& [_, lines] : this->topics)
 		line_count += lines.size();
@@ -305,36 +551,36 @@ void HelpServCore::SendStats(CommandSource& source)
 	this->Reply(source, "HelpServ stats:");
 	this->ReplyF(source, "Topics: %zu, Lines: %zu", this->topics.size(), line_count);
 	this->ReplyF(source, "HELP requests: %llu (unknown topics: %llu)",
-		static_cast<unsigned long long>(this->help_requests),
-		static_cast<unsigned long long>(this->unknown_topics));
+		static_cast<unsigned long long>(st->help_requests),
+		static_cast<unsigned long long>(st->unknown_topics));
 	this->ReplyF(source, "SEARCH requests: %llu (hits: %llu, misses: %llu)",
-		static_cast<unsigned long long>(this->search_requests),
-		static_cast<unsigned long long>(this->search_hits),
-		static_cast<unsigned long long>(this->search_misses));
+		static_cast<unsigned long long>(st->search_requests),
+		static_cast<unsigned long long>(st->search_hits),
+		static_cast<unsigned long long>(st->search_misses));
 	this->ReplyF(source, "Tickets cmd usage: REQUEST %llu, CANCEL %llu, LIST %llu, NEXT %llu, VIEW %llu",
-		static_cast<unsigned long long>(this->request_requests),
-		static_cast<unsigned long long>(this->cancel_requests),
-		static_cast<unsigned long long>(this->list_requests),
-		static_cast<unsigned long long>(this->next_requests),
-		static_cast<unsigned long long>(this->view_requests));
+		static_cast<unsigned long long>(st->request_requests),
+		static_cast<unsigned long long>(st->cancel_requests),
+		static_cast<unsigned long long>(st->list_requests),
+		static_cast<unsigned long long>(st->next_requests),
+		static_cast<unsigned long long>(st->view_requests));
 	this->ReplyF(source, "Staff cmd usage: TAKE %llu, ASSIGN %llu, NOTE %llu, CLOSE %llu, PRIORITY %llu, WAIT %llu, UNWAIT %llu",
-		static_cast<unsigned long long>(this->take_requests),
-		static_cast<unsigned long long>(this->assign_requests),
-		static_cast<unsigned long long>(this->note_requests),
-		static_cast<unsigned long long>(this->close_requests),
-		static_cast<unsigned long long>(this->priority_requests),
-		static_cast<unsigned long long>(this->wait_requests),
-		static_cast<unsigned long long>(this->unwait_requests));
+		static_cast<unsigned long long>(st->take_requests),
+		static_cast<unsigned long long>(st->assign_requests),
+		static_cast<unsigned long long>(st->note_requests),
+		static_cast<unsigned long long>(st->close_requests),
+		static_cast<unsigned long long>(st->priority_requests),
+		static_cast<unsigned long long>(st->wait_requests),
+		static_cast<unsigned long long>(st->unwait_requests));
 	this->ReplyF(source, "Other cmd usage: HELPME %llu, NOTIFY %llu",
-		static_cast<unsigned long long>(this->helpme_requests),
-		static_cast<unsigned long long>(this->notify_requests));
+		static_cast<unsigned long long>(st->helpme_requests),
+		static_cast<unsigned long long>(st->notify_requests));
 
-	if (!this->topic_requests.empty())
+	if (!st->topic_requests.empty())
 	{
 		// Show top 5 topics.
 		std::vector<std::pair<Anope::string, uint64_t>> top;
-		top.reserve(this->topic_requests.size());
-		for (const auto& kv : this->topic_requests)
+		top.reserve(st->topic_requests.size());
+		for (const auto& kv : st->topic_requests)
 			top.push_back(kv);
 		std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) {
 			return a.second > b.second;
@@ -356,7 +602,7 @@ void HelpServCore::SendStats(CommandSource& source)
 
 	this->PruneExpiredTickets();
 	const auto now = Anope::CurTime;
-	if (!this->tickets_by_id.empty())
+	if (!HelpServTicketList->empty())
 	{
 		size_t open = 0;
 		size_t waiting = 0;
@@ -373,7 +619,7 @@ void HelpServCore::SendStats(CommandSource& source)
 		time_t oldest_wait_updated = 0;
 
 		std::map<Anope::string, uint64_t> ticket_topics;
-		auto consider_oldest = [&](bool is_waiting, const Ticket& t) {
+		auto consider_oldest = [&](bool is_waiting, const HelpServTicket& t) {
 			const auto created = t.created;
 			if (!created)
 				return;
@@ -388,8 +634,12 @@ void HelpServCore::SendStats(CommandSource& source)
 			}
 		};
 
-		for (const auto& [_, t] : this->tickets_by_id)
+		for (const auto& it : *HelpServTicketList)
 		{
+			const auto* tp = it.second;
+			if (!tp)
+				continue;
+			const auto& t = *tp;
 			const auto state = NormalizeState(t.state);
 			const bool is_waiting = state.equals_ci("waiting");
 			if (is_waiting)
@@ -413,9 +663,9 @@ void HelpServCore::SendStats(CommandSource& source)
 			consider_oldest(is_waiting, t);
 		}
 
-		this->ReplyF(source, "Tickets: %zu (open: %zu, waiting: %zu)", this->tickets_by_id.size(), open, waiting);
+		this->ReplyF(source, "Tickets: %zu (open: %zu, waiting: %zu)", HelpServTicketList->size(), open, waiting);
 		this->ReplyF(source, "Tickets by priority: high: %zu, normal: %zu, low: %zu", pri_high, pri_normal, pri_low);
-		this->ReplyF(source, "Tickets assigned: %zu (unassigned: %zu)", assigned, this->tickets_by_id.size() - assigned);
+		this->ReplyF(source, "Tickets assigned: %zu (unassigned: %zu)", assigned, HelpServTicketList->size() - assigned);
 
 		auto age = [&](time_t when) {
 			if (!when || now <= when)
@@ -460,17 +710,6 @@ void HelpServCore::SendStats(CommandSource& source)
 
 	if (this->last_reload)
 		this->ReplyF(source, "Last reload: %s", Anope::strftime(this->last_reload, source.GetAccount()).c_str());
-}
-
-Anope::string HelpServCore::GetStatsPath()
-{
-	// Stored in Anope data directory (requested: data/helpserv.db).
-	return Anope::ExpandData("helpserv.db");
-}
-
-Anope::string HelpServCore::GetTicketsPath()
-{
-	return Anope::ExpandData("helpserv_tickets.db");
 }
 
 bool HelpServCore::ParseU64(const Anope::string& in, uint64_t& out)
@@ -549,12 +788,14 @@ time_t HelpServCore::ParseDurationSeconds(const Anope::string& in, time_t fallba
 	return static_cast<time_t>(n * mult);
 }
 
-HelpServCore::Ticket* HelpServCore::FindTicketById(uint64_t id)
+HelpServTicket* HelpServCore::FindTicketById(uint64_t id)
 {
-	auto it = this->tickets_by_id.find(id);
-	if (it == this->tickets_by_id.end())
+	if (!id)
 		return nullptr;
-	return &it->second;
+	auto it = HelpServTicketList->find(TicketKey(id));
+	if (it == HelpServTicketList->end())
+		return nullptr;
+	return it->second;
 }
 
 void HelpServCore::PruneExpiredTickets()
@@ -565,166 +806,120 @@ void HelpServCore::PruneExpiredTickets()
 	if (now <= 0)
 		return;
 	const auto cutoff = now - this->ticket_expire;
-	std::vector<uint64_t> expired;
-	for (const auto& [id, t] : this->tickets_by_id)
+	std::vector<HelpServTicket*> expired;
+	for (const auto& it : *HelpServTicketList)
 	{
-		const auto last = t.updated ? t.updated : t.created;
+		HelpServTicket* t = it.second;
+		if (!t)
+			continue;
+		const auto last = t->updated ? t->updated : t->created;
 		if (last && last < cutoff)
-			expired.push_back(id);
+			expired.push_back(t);
 	}
 	if (expired.empty())
 		return;
 
-	for (const auto id : expired)
-	{
-		auto it = this->tickets_by_id.find(id);
-		if (it == this->tickets_by_id.end())
-			continue;
-		this->open_ticket_by_account.erase(NormalizeTopic(it->second.account));
-		this->tickets_by_id.erase(it);
-	}
-	this->SaveTicketsToFile();
+	for (auto* t : expired)
+		delete t;
+	this->ScheduleDBSave();
 	Log(this) << "Expired " << expired.size() << " old tickets";
 }
 
-void HelpServCore::LoadStatsFromFile()
+void HelpServCore::PruneCooldownMaps(time_t now)
 {
-	this->loaded_topic_requests.clear();
-
-	const auto path = GetStatsPath();
-	std::ifstream in(path.c_str());
-	if (!in.is_open())
+	if (now <= 0)
+		return;
+	auto* st = this->state;
+	if (!st)
 		return;
 
-	for (std::string line; std::getline(in, line);)
-	{
-		Anope::string s(line.c_str());
-		s.trim();
-		if (s.empty() || s[0] == '#')
-			continue;
+	// These maps are only used for rate limiting, but can grow without bound
+	// if many unique users hit HELPME/REQUEST over time.
+	const size_t total_size = st->last_helpme_by_key.size() + st->last_request_by_key.size();
+	const size_t max_size_before_force = static_cast<size_t>(this->cooldown_prune_max_size);
+	const time_t prune_interval = this->cooldown_prune_interval;
+	const time_t ttl = this->cooldown_prune_ttl;
 
-		auto eq = s.find('=');
-		if (eq == Anope::string::npos)
-			continue;
+	if (total_size < max_size_before_force && this->last_cooldown_prune && prune_interval > 0 && now - this->last_cooldown_prune < prune_interval)
+		return;
 
-		Anope::string key = s.substr(0, eq);
-		Anope::string val = s.substr(eq + 1);
-		key.trim();
-		val.trim();
-
-		uint64_t n = 0;
-		if (!ParseU64(val, n))
-			continue;
-
-		if (key.equals_ci("help_requests"))
-			this->help_requests = n;
-		else if (key.equals_ci("search_requests"))
-			this->search_requests = n;
-		else if (key.equals_ci("search_hits"))
-			this->search_hits = n;
-		else if (key.equals_ci("search_misses"))
-			this->search_misses = n;
-		else if (key.equals_ci("unknown_topics"))
-			this->unknown_topics = n;
-		else if (key.equals_ci("helpme_requests"))
-			this->helpme_requests = n;
-		else if (key.equals_ci("request_requests"))
-			this->request_requests = n;
-		else if (key.equals_ci("cancel_requests"))
-			this->cancel_requests = n;
-		else if (key.equals_ci("list_requests"))
-			this->list_requests = n;
-		else if (key.equals_ci("next_requests"))
-			this->next_requests = n;
-		else if (key.equals_ci("view_requests"))
-			this->view_requests = n;
-		else if (key.equals_ci("take_requests"))
-			this->take_requests = n;
-		else if (key.equals_ci("assign_requests"))
-			this->assign_requests = n;
-		else if (key.equals_ci("note_requests"))
-			this->note_requests = n;
-		else if (key.equals_ci("close_requests"))
-			this->close_requests = n;
-		else if (key.equals_ci("priority_requests"))
-			this->priority_requests = n;
-		else if (key.equals_ci("wait_requests"))
-			this->wait_requests = n;
-		else if (key.equals_ci("unwait_requests"))
-			this->unwait_requests = n;
-		else if (key.equals_ci("notify_requests"))
-			this->notify_requests = n;
-		else if (key.length() > 6 && key.substr(0, 6).equals_ci("topic."))
+	bool changed = false;
+	auto prune_map = [&](auto& m) {
+		for (auto it = m.begin(); it != m.end(); )
 		{
-			const auto t = NormalizeTopic(key.substr(6));
-			if (!t.empty())
-				this->loaded_topic_requests[t] = n;
+			const time_t last = it->second;
+			if (!last || now - last > ttl)
+			{
+				it = m.erase(it);
+				changed = true;
+			}
+			else
+				++it;
 		}
-	}
+	};
+
+	prune_map(st->last_helpme_by_key);
+	prune_map(st->last_request_by_key);
+	this->last_cooldown_prune = now;
+	if (changed)
+		this->MarkStateChanged();
 }
 
-void HelpServCore::SaveStatsToFile()
+class HelpServCore::HelpServDeferredSaveTimer final
+	: public Timer
 {
-	const auto path = GetStatsPath();
-	const auto tmp = path + ".tmp";
+	HelpServCore& hs;
 
-	std::ofstream out(tmp.c_str(), std::ios::out | std::ios::trunc);
-	if (!out.is_open())
+public:
+	HelpServDeferredSaveTimer(HelpServCore& owner, time_t seconds)
+		: Timer(&owner, seconds, true)
+		, hs(owner)
 	{
-		Log(this) << "Unable to write " << tmp;
+	}
+
+	void Tick() override
+	{
+		if (!this->hs.db_save_pending)
+		{
+			this->hs.db_save_timer = nullptr;
+			delete this;
+			return;
+		}
+
+		if (!Me || !Me->IsSynced())
+			return;
+
+		this->hs.db_save_pending = false;
+		Anope::SaveDatabases();
+		this->hs.db_save_timer = nullptr;
+		delete this;
+	}
+};
+
+void HelpServCore::ScheduleDBSave()
+{
+	if (Anope::ReadOnly)
 		return;
-	}
-
-	out << "# HelpServ stats\n";
-	out << "version=1\n";
-	out << "help_requests=" << this->help_requests << "\n";
-	out << "unknown_topics=" << this->unknown_topics << "\n";
-	out << "search_requests=" << this->search_requests << "\n";
-	out << "search_hits=" << this->search_hits << "\n";
-	out << "search_misses=" << this->search_misses << "\n";
-	out << "helpme_requests=" << this->helpme_requests << "\n";
-	out << "request_requests=" << this->request_requests << "\n";
-	out << "cancel_requests=" << this->cancel_requests << "\n";
-	out << "list_requests=" << this->list_requests << "\n";
-	out << "next_requests=" << this->next_requests << "\n";
-	out << "view_requests=" << this->view_requests << "\n";
-	out << "take_requests=" << this->take_requests << "\n";
-	out << "assign_requests=" << this->assign_requests << "\n";
-	out << "note_requests=" << this->note_requests << "\n";
-	out << "close_requests=" << this->close_requests << "\n";
-	out << "priority_requests=" << this->priority_requests << "\n";
-	out << "wait_requests=" << this->wait_requests << "\n";
-	out << "unwait_requests=" << this->unwait_requests << "\n";
-	out << "notify_requests=" << this->notify_requests << "\n";
-	for (const auto& [topic, count] : this->topic_requests)
-		out << "topic." << topic << "=" << count << "\n";
-	out.close();
-
-	std::error_code ec;
-	fs::rename(tmp.c_str(), path.c_str(), ec);
-	if (ec)
-	{
-		fs::remove(path.c_str(), ec);
-		ec.clear();
-		fs::rename(tmp.c_str(), path.c_str(), ec);
-		if (ec)
-			Log(this) << "Unable to replace " << path << ": " << ec.message();
-	}
+	this->db_save_pending = true;
+	if (this->db_save_timer)
+		return;
+	// Coalesce writes: save once within ~5 seconds.
+	this->db_save_timer = new HelpServDeferredSaveTimer(*this, 5);
 }
 
-void HelpServCore::MaybeSaveStats()
+void HelpServCore::MarkStateChanged()
 {
-	++this->pending_stat_updates;
-	const auto now = Anope::CurTime;
-	if (this->last_stats_save == 0)
-		this->last_stats_save = now;
+	if (!this->state)
+		return;
+	this->state->QueueUpdate();
+	this->ScheduleDBSave();
+}
 
-	if (now - this->last_stats_save >= 30 || this->pending_stat_updates >= 50)
-	{
-		this->SaveStatsToFile();
-		this->last_stats_save = now;
-		this->pending_stat_updates = 0;
-	}
+void HelpServCore::MarkTicketChanged(HelpServTicket* t)
+{
+	if (t)
+		t->QueueUpdate();
+	this->ScheduleDBSave();
 }
 
 bool HelpServCore::IsStaff(CommandSource& source) const
@@ -759,199 +954,35 @@ void HelpServCore::PageStaff(const Anope::string& msg)
 	}
 }
 
-void HelpServCore::LoadTicketsFromFile()
+HelpServTicket* HelpServCore::FindOpenTicketByAccountKey(const Anope::string& account_key)
 {
-	this->tickets_by_id.clear();
-	this->open_ticket_by_account.clear();
-	this->next_ticket_id = 1;
-
-	const auto path = GetTicketsPath();
-	std::ifstream in(path.c_str());
-	if (!in.is_open())
-		return;
-
-	for (std::string line; std::getline(in, line);)
-	{
-		Anope::string s(line.c_str());
-		s.trim();
-		if (s.empty() || s[0] == '#')
-			continue;
-
-		auto eq = s.find('=');
-		if (eq == Anope::string::npos)
-			continue;
-
-		Anope::string key = s.substr(0, eq);
-		Anope::string val = s.substr(eq + 1);
-		key.trim();
-		val = UnescapeValue(val);
-		val.trim();
-
-		uint64_t n = 0;
-		if (key.equals_ci("next_ticket_id"))
-		{
-			if (ParseU64(val, n) && n)
-				this->next_ticket_id = n;
-			continue;
-		}
-
-		if (!key.length() || !key.substr(0, 7).equals_ci("ticket."))
-			continue;
-
-		// ticket.<id>.<field>
-		const auto rest = key.substr(7);
-		auto dot = rest.find('.');
-		if (dot == Anope::string::npos)
-			continue;
-		const auto id_s = rest.substr(0, dot);
-		const auto field = rest.substr(dot + 1);
-		if (!ParseU64(id_s, n) || n == 0)
-			continue;
-
-		auto& t = this->tickets_by_id[n];
-		t.id = n;
-		if (field.equals_ci("account"))
-			t.account = val;
-		else if (field.equals_ci("nick"))
-			t.nick = val;
-		else if (field.equals_ci("requester"))
-			t.requester = val;
-		else if (field.equals_ci("topic"))
-			t.topic = val;
-		else if (field.equals_ci("message"))
-			t.message = val;
-		else if (field.equals_ci("priority"))
-		{
-			uint64_t n2 = 0;
-			if (ParseU64(val, n2))
-				t.priority = ClampPriority(static_cast<int>(n2));
-		}
-		else if (field.equals_ci("state"))
-			t.state = NormalizeState(val);
-		else if (field.equals_ci("wait_reason"))
-			t.wait_reason = val;
-		else if (field.equals_ci("assigned"))
-			t.assigned = val;
-		else if (field.length() > 5 && field.substr(0, 5).equals_ci("note."))
-		{
-			uint64_t idx = 0;
-			if (ParseU64(field.substr(5), idx))
-			{
-				if (idx < 1000)
-				{
-					if (t.notes.size() <= idx)
-						t.notes.resize(static_cast<size_t>(idx) + 1);
-					t.notes[static_cast<size_t>(idx)] = val;
-				}
-			}
-		}
-		else if (field.equals_ci("created"))
-		{
-			uint64_t ts;
-			if (ParseU64(val, ts))
-				t.created = static_cast<time_t>(ts);
-		}
-		else if (field.equals_ci("updated"))
-		{
-			uint64_t ts;
-			if (ParseU64(val, ts))
-				t.updated = static_cast<time_t>(ts);
-		}
-	}
-
-	// Build account index.
-	for (const auto& [id, t] : this->tickets_by_id)
-	{
-		if (!t.account.empty())
-			this->open_ticket_by_account[NormalizeTopic(t.account)] = id;
-		if (id >= this->next_ticket_id)
-			this->next_ticket_id = id + 1;
-	}
-
-	// If all tickets were closed, reset the counter so the flatfile doesn't
-	// keep drifting upwards forever (requested behavior).
-	if (this->tickets_by_id.empty() && this->next_ticket_id != 1)
-	{
-		this->next_ticket_id = 1;
-		if (!Anope::ReadOnly)
-			this->SaveTicketsToFile();
-	}
-}
-
-void HelpServCore::SaveTicketsToFile()
-{
-	const auto path = GetTicketsPath();
-	const auto tmp = path + ".tmp";
-
-	// When there are no open tickets, reset next_ticket_id for clean files.
-	if (this->tickets_by_id.empty())
-		this->next_ticket_id = 1;
-
-	std::ofstream out(tmp.c_str(), std::ios::out | std::ios::trunc);
-	if (!out.is_open())
-	{
-		Log(this) << "Unable to write " << tmp;
-		return;
-	}
-
-	out << "# HelpServ tickets\n";
-	out << "version=2\n";
-	out << "next_ticket_id=" << this->next_ticket_id << "\n";
-	for (const auto& [id, t] : this->tickets_by_id)
-	{
-		out << "ticket." << id << ".account=" << EscapeValue(t.account) << "\n";
-		out << "ticket." << id << ".nick=" << EscapeValue(t.nick) << "\n";
-		out << "ticket." << id << ".requester=" << EscapeValue(t.requester) << "\n";
-		out << "ticket." << id << ".topic=" << EscapeValue(t.topic) << "\n";
-		out << "ticket." << id << ".message=" << EscapeValue(t.message) << "\n";
-		out << "ticket." << id << ".priority=" << static_cast<uint64_t>(ClampPriority(t.priority)) << "\n";
-		out << "ticket." << id << ".state=" << EscapeValue(NormalizeState(t.state)) << "\n";
-		out << "ticket." << id << ".wait_reason=" << EscapeValue(t.wait_reason) << "\n";
-		out << "ticket." << id << ".assigned=" << EscapeValue(t.assigned) << "\n";
-		out << "ticket." << id << ".created=" << static_cast<uint64_t>(t.created) << "\n";
-		out << "ticket." << id << ".updated=" << static_cast<uint64_t>(t.updated) << "\n";
-		for (size_t i = 0; i < t.notes.size(); ++i)
-		{
-			if (t.notes[i].empty())
-				continue;
-			out << "ticket." << id << ".note." << static_cast<uint64_t>(i) << "=" << EscapeValue(t.notes[i]) << "\n";
-		}
-	}
-	out.close();
-
-	std::error_code ec;
-	fs::rename(tmp.c_str(), path.c_str(), ec);
-	if (ec)
-	{
-		fs::remove(path.c_str(), ec);
-		ec.clear();
-		fs::rename(tmp.c_str(), path.c_str(), ec);
-		if (ec)
-			Log(this) << "Unable to replace " << path << ": " << ec.message();
-	}
-}
-
-HelpServCore::Ticket* HelpServCore::FindOpenTicketByAccountKey(const Anope::string& account_key)
-{
-	auto it = this->open_ticket_by_account.find(NormalizeTopic(account_key));
-	if (it == this->open_ticket_by_account.end())
+	const auto needle = NormalizeTopic(account_key);
+	if (needle.empty())
 		return nullptr;
-	auto it2 = this->tickets_by_id.find(it->second);
-	if (it2 == this->tickets_by_id.end())
-		return nullptr;
-	return &it2->second;
+	for (const auto& it : *HelpServTicketList)
+	{
+		HelpServTicket* t = it.second;
+		if (!t)
+			continue;
+		if (!t->account.empty() && NormalizeTopic(t->account) == needle)
+			return t;
+	}
+	return nullptr;
 }
 
-HelpServCore::Ticket* HelpServCore::FindOpenTicketByNickOrAccount(const Anope::string& who)
+HelpServTicket* HelpServCore::FindOpenTicketByNickOrAccount(const Anope::string& who)
 {
 	// Try account key first.
 	if (auto* t = this->FindOpenTicketByAccountKey(who))
 		return t;
 
 	// Fall back to nick match.
-	for (auto& [_, t] : this->tickets_by_id)
-		if (t.nick.equals_ci(who))
-			return &t;
+	for (const auto& it : *HelpServTicketList)
+	{
+		HelpServTicket* t = it.second;
+		if (t && t->nick.equals_ci(who))
+			return t;
+	}
 	return nullptr;
 }
 
@@ -963,8 +994,11 @@ void HelpServCore::NotifyTicketEvent(const Anope::string& msg)
 
 void HelpServCore::Search(CommandSource& source, const Anope::string& query)
 {
-	++this->search_requests;
-	this->MaybeSaveStats();
+	if (this->state)
+	{
+		++this->state->search_requests;
+		this->MarkStateChanged();
+	}
 	Anope::string q = query;
 	q.trim();
 	if (q.empty())
@@ -993,15 +1027,21 @@ void HelpServCore::Search(CommandSource& source, const Anope::string& query)
 
 	if (matches.empty())
 	{
-		++this->search_misses;
-		this->MaybeSaveStats();
+		if (this->state)
+		{
+			++this->state->search_misses;
+			this->MarkStateChanged();
+		}
 		this->ReplyF(source, "No topics matched \002%s\002.", q.c_str());
 		this->Reply(source, "Try: \002HELP\002 to list topics.");
 		return;
 	}
 
-	++this->search_hits;
-	this->MaybeSaveStats();
+	if (this->state)
+	{
+		++this->state->search_hits;
+		this->MarkStateChanged();
+	}
 	std::sort(matches.begin(), matches.end());
 
 	const size_t limit = 10;
@@ -1021,7 +1061,7 @@ void HelpServCore::Search(CommandSource& source, const Anope::string& query)
 void HelpServCore::LoadTopics(const Configuration::Block& mod)
 {
 	this->topics.clear();
-	this->topic_requests.clear();
+	bool state_changed = false;
 
 	const int topic_count = mod.CountBlock("topic");
 	for (int i = 0; i < topic_count; ++i)
@@ -1044,18 +1084,27 @@ void HelpServCore::LoadTopics(const Configuration::Block& mod)
 
 		if (!lines.empty())
 		{
-			uint64_t existing = 0;
-			auto it = this->loaded_topic_requests.find(topic_name);
-			if (it != this->loaded_topic_requests.end())
-				existing = it->second;
-			this->topic_requests.emplace(topic_name, existing);
+			if (this->state)
+			{
+				auto it = this->state->topic_requests.find(topic_name);
+				if (it == this->state->topic_requests.end())
+				{
+					this->state->topic_requests.emplace(topic_name, 0);
+					state_changed = true;
+				}
+			}
 			this->topics.emplace(std::move(topic_name), std::move(lines));
 		}
 	}
+
+	if (state_changed)
+		this->MarkStateChanged();
 }
 
 HelpServCore::HelpServCore(const Anope::string& modname, const Anope::string& creator)
 	: Module(modname, creator, PSEUDOCLIENT | THIRD)
+	, ticket_type(this)
+	, state_type(this)
 	, command_search(this, *this)
 	, command_stats(this, *this)
 	, command_helpme(this, *this)
@@ -1079,14 +1128,21 @@ HelpServCore::HelpServCore(const Anope::string& modname, const Anope::string& cr
 
 HelpServCore::~HelpServCore()
 {
-	this->SaveStatsToFile();
+	this->db_save_pending = false;
+	this->db_save_timer = nullptr;
 }
 
 void HelpServCore::OnReload(Configuration::Conf& conf)
 {
-	// Reload persisted stats first so topic counters can be preserved.
-	this->LoadStatsFromFile();
-	this->LoadTicketsFromFile();
+	// Ensure we have a persistent state record.
+	auto it = HelpServStateList->find("state");
+	if (it != HelpServStateList->end())
+		this->state = it->second;
+	if (!this->state)
+		this->state = new HelpServState();
+	this->state->name = "state";
+	if (!this->state->next_ticket_id)
+		this->state->next_ticket_id = 1;
 
 	const Configuration::Block* mod = &conf.GetModule(this);
 	Anope::string nick = mod->Get<const Anope::string>("client");
@@ -1114,6 +1170,15 @@ void HelpServCore::OnReload(Configuration::Conf& conf)
 	this->staff_target = mod->Get<Anope::string>("staff_target", "");
 	this->helpme_cooldown = mod->Get<time_t>("helpme_cooldown", "120");
 	this->request_cooldown = mod->Get<time_t>("request_cooldown", "60");
+	this->cooldown_prune_interval = ParseDurationSeconds(mod->Get<Anope::string>("cooldown_prune_interval", "1h"), 60 * 60);
+	this->cooldown_prune_ttl = ParseDurationSeconds(mod->Get<Anope::string>("cooldown_prune_ttl", "24h"), 60 * 60 * 24);
+	{
+		uint64_t max_size = 0;
+		if (ParseU64(mod->Get<Anope::string>("cooldown_prune_max_size", "5000"), max_size) && max_size)
+			this->cooldown_prune_max_size = max_size;
+		else
+			this->cooldown_prune_max_size = 5000;
+	}
 	this->page_on_request = mod->Get<bool>("page_on_request", "yes");
 	this->ticket_priv = mod->Get<Anope::string>("ticket_priv", "helpserv/ticket");
 	this->ticket_expire = ParseDurationSeconds(mod->Get<Anope::string>("ticket_expire", "0"), 0);
@@ -1126,6 +1191,9 @@ void HelpServCore::OnReload(Configuration::Conf& conf)
 	this->PruneExpiredTickets();
 
 	this->LoadTopics(*mod);
+
+	// Ensure the db backend writes helpserv.module.json.
+	this->MarkStateChanged();
 }
 
 EventReturn HelpServCore::OnBotPrivmsg(User* u, BotInfo* bi, Anope::string& message, const Anope::map<Anope::string>& tags)
@@ -1152,8 +1220,11 @@ EventReturn HelpServCore::OnPreHelp(CommandSource& source, const std::vector<Ano
 	if (!this->HelpServ || source.service != *this->HelpServ)
 		return EVENT_CONTINUE;
 
-	++this->help_requests;
-	this->MaybeSaveStats();
+	if (this->state)
+	{
+		++this->state->help_requests;
+		this->MarkStateChanged();
+	}
 
 	if (params.empty())
 	{
@@ -1164,15 +1235,19 @@ EventReturn HelpServCore::OnPreHelp(CommandSource& source, const std::vector<Ano
 	const Anope::string topic_key = NormalizeTopic(params[0]);
 	if (!topic_key.empty() && this->SendTopic(source, topic_key))
 	{
-		auto it = this->topic_requests.find(topic_key);
-		if (it != this->topic_requests.end())
-			++it->second;
-		this->MaybeSaveStats();
+		if (this->state)
+		{
+			++this->state->topic_requests[topic_key];
+			this->MarkStateChanged();
+		}
 		return EVENT_STOP;
 	}
 
-	++this->unknown_topics;
-	this->MaybeSaveStats();
+	if (this->state)
+	{
+		++this->state->unknown_topics;
+		this->MarkStateChanged();
+	}
 	this->Reply(source, "I don't know that topic. Try: \002HELP\002 or \002SEARCH <words>\002");
 	return EVENT_STOP;
 }
