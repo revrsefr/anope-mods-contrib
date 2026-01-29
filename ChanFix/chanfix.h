@@ -108,6 +108,7 @@ private:
 	bool clear_modes_on_fix = false;
 	bool clear_bans_on_fix = false;
 	bool clear_moderated_on_fix = false;
+	bool deop_below_threshold_on_fix = false;
 
 	unsigned int op_threshold = 3;
 	unsigned int min_fix_score = 12;

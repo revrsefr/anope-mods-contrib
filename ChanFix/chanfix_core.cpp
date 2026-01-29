@@ -552,6 +552,8 @@ bool ChanFixCore::FixChannel(CFChannelData& rec, Channel* c)
 
 	const unsigned int threshold = this->GetThreshold(rec, Anope::CurTime);
 	unsigned int opped = 0;
+	unsigned int good_ops_already_present = 0;
+	std::vector<User*> to_deop;
 	const bool already_in_chan = c->FindUser(this->chanfix) != NULL;
 	bool joined = already_in_chan;
 
@@ -559,17 +561,23 @@ bool ChanFixCore::FixChannel(CFChannelData& rec, Channel* c)
 	{
 		if (!u || !cuc || u == this->chanfix)
 			continue;
-		if (cuc->status.HasMode(this->op_status_char))
-			continue;
 
-		const CFOpRecord* orec = nullptr;
-		auto it = rec.oprecords.find(this->KeyForUser(u));
-		if (it != rec.oprecords.end())
-			orec = &it->second;
-		if (!orec)
-			continue;
+		const bool is_opped = cuc->status.HasMode(this->op_status_char);
+		unsigned int score = 0;
+		if (auto it = rec.oprecords.find(this->KeyForUser(u)); it != rec.oprecords.end())
+			score = this->CalculateScore(it->second);
+		const bool should_be_op = (score >= threshold);
 
-		if (this->CalculateScore(*orec) < threshold)
+		if (is_opped)
+		{
+			if (should_be_op)
+				++good_ops_already_present;
+			else if (this->deop_below_threshold_on_fix)
+				to_deop.push_back(u);
+			continue;
+		}
+
+		if (!should_be_op)
 			continue;
 
 		if (this->join_to_fix && !joined)
@@ -582,7 +590,19 @@ bool ChanFixCore::FixChannel(CFChannelData& rec, Channel* c)
 		opped++;
 	}
 
-	if (opped == 0)
+	// Only deop if at least one "good" op will remain (either already present or newly opped).
+	const unsigned int good_ops_after = good_ops_already_present + opped;
+	if (this->deop_below_threshold_on_fix && good_ops_after > 0)
+	{
+		for (User* u : to_deop)
+		{
+			if (!u)
+				continue;
+			c->RemoveMode(this->chanfix, "OP", u->GetUID(), false);
+		}
+	}
+
+	if (good_ops_after == 0)
 		return false;
 
 	if (this->clear_modes_on_fix)
@@ -702,6 +722,7 @@ void ChanFixCore::OnReload(Configuration::Conf& conf)
 	this->clear_modes_on_fix = mod->Get<bool>("clear_modes_on_fix", "no");
 	this->clear_bans_on_fix = mod->Get<bool>("clear_bans_on_fix", "no");
 	this->clear_moderated_on_fix = mod->Get<bool>("clear_moderated_on_fix", "no");
+	this->deop_below_threshold_on_fix = mod->Get<bool>("deop_below_threshold_on_fix", "no");
 
 	this->op_threshold = mod->Get<unsigned int>("op_threshold", "3");
 	this->min_fix_score = mod->Get<unsigned int>("min_fix_score", "12");
