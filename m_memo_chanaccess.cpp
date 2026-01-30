@@ -21,16 +21,19 @@
  *
  *    # Use MemoServ (memos)
  *    notify_access_add = yes
+ *    notify_access_del = yes
  *    notify_founder_change = yes
  *    notify_successor_change = yes
  *
  *   # Send email — uses Anope’s mail system (same as NickServ’s email features)
  *    email_access_add = no
+ *    email_access_del = no
  *    email_founder_change = no
  *    email_successor_change = no
  *
  *   # Mail templates in the global mail block (supports HTML when mail:content_type is text/html)
  *   #  chanaccess_access_subject / chanaccess_access_message
+ *   #  chanaccess_access_del_subject / chanaccess_access_del_message
  *   #  chanaccess_founder_subject / chanaccess_founder_message
  *   #  chanaccess_successor_subject / chanaccess_successor_message
  *   # Available tokens:
@@ -67,9 +70,11 @@ class ModuleMemoChanAccess final
 	: public Module
 {
 	bool notify_access_add = true;
+	bool notify_access_del = true;
 	bool notify_founder_change = true;
 	bool notify_successor_change = true;
 	bool email_access_add = false;
+	bool email_access_del = false;
 	bool email_founder_change = false;
 	bool email_successor_change = false;
 	bool notice_unregistered_access_add = false;
@@ -96,9 +101,11 @@ class ModuleMemoChanAccess final
 	void LoadConfig(Configuration::Block &block)
 	{
 		notify_access_add = block.Get<bool>("notify_access_add", "yes");
+		notify_access_del = block.Get<bool>("notify_access_del", "yes");
 		notify_founder_change = block.Get<bool>("notify_founder_change", "yes");
 		notify_successor_change = block.Get<bool>("notify_successor_change", "yes");
 		email_access_add = block.Get<bool>("email_access_add", "no");
+		email_access_del = block.Get<bool>("email_access_del", "no");
 		email_founder_change = block.Get<bool>("email_founder_change", "no");
 		email_successor_change = block.Get<bool>("email_successor_change", "no");
 		notice_unregistered_access_add = block.Get<bool>("notice_unregistered_access_add", "no");
@@ -263,6 +270,33 @@ public:
 				"chanaccess_access_subject", "Access update for {channel}").c_str()), vars);
 			auto message = Anope::Template(Language::Translate(target, Config->GetBlock("mail").Get<const Anope::string>(
 				"chanaccess_access_message", "You have been added to the access list for {channel} by {actor} (access: {access}).").c_str()), vars);
+			TrySendEmail(source, target, subject, message);
+		}
+	}
+
+	void OnAccessDel(ChannelInfo *ci, CommandSource &source, ChanAccess *access) override
+	{
+		if (!ci || !access)
+			return;
+		if (!notify_access_del && !email_access_del)
+			return;
+
+		auto *target = access->GetAccount();
+		if (!target)
+			return;
+
+		Anope::string msg = "You have been removed from the access list for " + ci->name
+			+ " by " + source.GetNick() + " (access: " + access->AccessSerialize() + ").";
+
+		if (notify_access_del)
+			TrySendMemo(source, ci, target, msg);
+		if (email_access_del)
+		{
+			auto vars = BuildTemplateVars(ci, source, target, access->AccessSerialize(), access->Mask());
+			auto subject = Anope::Template(Language::Translate(target, Config->GetBlock("mail").Get<const Anope::string>(
+				"chanaccess_access_del_subject", "Access removed for {channel}").c_str()), vars);
+			auto message = Anope::Template(Language::Translate(target, Config->GetBlock("mail").Get<const Anope::string>(
+				"chanaccess_access_del_message", "You have been removed from the access list for {channel} by {actor} (access: {access}).").c_str()), vars);
 			TrySendEmail(source, target, subject, message);
 		}
 	}

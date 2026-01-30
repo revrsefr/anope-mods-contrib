@@ -12,11 +12,13 @@ module {
 
 	# MemoServ (memos)
 	notify_access_add = yes
+	notify_access_del = yes
 	notify_founder_change = yes
 	notify_successor_change = yes
 
 	# Email (Anope mail system)
 	email_access_add = no
+	email_access_del = no
 	email_founder_change = no
 	email_successor_change = no
 
@@ -51,6 +53,15 @@ mail
 	chanaccess_access_message = "<p>Hello {target},</p>
 
 			<p>{actor} added you to the access list for <strong>{channel}</strong> (access: <strong>{access}</strong>).</p>
+
+			<p><strong>Mask:</strong> <code>{mask}</code><br>
+			<strong>Time:</strong> {timestamp}<br>
+			<strong>Network:</strong> {network}</p>"
+
+	chanaccess_access_del_subject = "Access removed for {channel}"
+	chanaccess_access_del_message = "<p>Hello {target},</p>
+
+			<p>{actor} removed you from the access list for <strong>{channel}</strong> (access: <strong>{access}</strong>).</p>
 
 			<p><strong>Mask:</strong> <code>{mask}</code><br>
 			<strong>Time:</strong> {timestamp}<br>
