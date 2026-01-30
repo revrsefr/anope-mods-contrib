@@ -29,6 +29,13 @@
  *    email_founder_change = no
  *    email_successor_change = no
  *
+ *   # Mail templates in the global mail block (supports HTML when mail:content_type is text/html)
+ *   #  chanaccess_access_subject / chanaccess_access_message
+ *   #  chanaccess_founder_subject / chanaccess_founder_message
+ *   #  chanaccess_successor_subject / chanaccess_successor_message
+ *   # Available tokens:
+ *   #  {channel} {actor} {target} {access} {network} {account} {mask} {timestamp}
+ *
  *   # If access is added via a mask (e.g. nick!ident@host) and not a registered account,
  *   # the module can't memo/email the target. When enabled, it replies to the command source.
  *    notice_unregistered_access_add = no
@@ -53,6 +60,7 @@
  */
 
 #include "module.h"
+#include "mail.h"
 #include "modules/memoserv/service.h"
 
 class ModuleMemoChanAccess final
@@ -69,6 +77,21 @@ class ModuleMemoChanAccess final
 	bool notice_mask_access_add = false;
 	bool notify_self = false;
 	Anope::string sender;
+
+	Anope::map<Anope::string> BuildTemplateVars(ChannelInfo *ci, CommandSource &source, NickCore *target,
+			const Anope::string &access, const Anope::string &mask) const
+	{
+		return {
+			{ "channel", ci ? ci->name : "" },
+			{ "actor", source.GetNick() },
+			{ "target", target ? target->display : "" },
+			{ "access", access },
+			{ "network", Config->GetBlock("networkinfo").Get<const Anope::string>("networkname") },
+			{ "account", target ? target->display : "" },
+			{ "mask", mask },
+			{ "timestamp", Anope::strftime(Anope::CurTime, target) },
+		};
+	}
 
 	void LoadConfig(Configuration::Block &block)
 	{
@@ -129,6 +152,23 @@ class ModuleMemoChanAccess final
 			return;
 		if (!notify_self && source.GetAccount() && source.GetAccount() == target)
 			return;
+
+		const auto &mailconf = Config->GetBlock("mail");
+		if (!mailconf.Get<bool>("usemail"))
+		{
+			Log(LOG_DEBUG, "m_memo_chanaccess") << "Mail disabled (mail:usemail=no); no email sent to " << target->display;
+			return;
+		}
+		if (mailconf.Get<const Anope::string>("sendfrom").empty())
+		{
+			Log(LOG_DEBUG, "m_memo_chanaccess") << "Mail sendfrom is empty; no email sent to " << target->display;
+			return;
+		}
+		if (target->email.empty())
+		{
+			Log(LOG_DEBUG, "m_memo_chanaccess") << "Target has no email; no email sent to " << target->display;
+			return;
+		}
 
 		if (!Mail::Send(target, subject, text))
 			Log(LOG_DEBUG, "m_memo_chanaccess") << "Unable to send email to " << target->display;
@@ -212,11 +252,19 @@ public:
 		Anope::string msg = "You have been added to the access list for " + ci->name
 			+ " by " + source.GetNick() + " (access: " + access->AccessSerialize() + ").";
 
-		TrySendMemo(source, ci, target, msg);
+		if (notify_access_add)
+			TrySendMemo(source, ci, target, msg);
 		if (notice_online_access_add)
 			TrySendOnlineNotice(source, ci, target, msg);
 		if (email_access_add)
-			TrySendEmail(source, target, "Channel access update for " + ci->name, msg);
+		{
+			auto vars = BuildTemplateVars(ci, source, target, access->AccessSerialize(), access->Mask());
+			auto subject = Anope::Template(Language::Translate(target, Config->GetBlock("mail").Get<const Anope::string>(
+				"chanaccess_access_subject", "Access update for {channel}").c_str()), vars);
+			auto message = Anope::Template(Language::Translate(target, Config->GetBlock("mail").Get<const Anope::string>(
+				"chanaccess_access_message", "You have been added to the access list for {channel} by {actor} (access: {access}).").c_str()), vars);
+			TrySendEmail(source, target, subject, message);
+		}
 	}
 
 	void OnPostCommand(CommandSource &source, Command *command, const std::vector<Anope::string> &params) override
@@ -241,7 +289,14 @@ public:
 			if (notify_founder_change)
 				TrySendMemo(source, ci, na->nc, msg);
 			if (email_founder_change)
-				TrySendEmail(source, na->nc, "Founder change for " + ci->name, msg);
+			{
+				auto vars = BuildTemplateVars(ci, source, na->nc, "", "");
+				auto subject = Anope::Template(Language::Translate(na->nc, Config->GetBlock("mail").Get<const Anope::string>(
+					"chanaccess_founder_subject", "Founder change for {channel}").c_str()), vars);
+				auto message = Anope::Template(Language::Translate(na->nc, Config->GetBlock("mail").Get<const Anope::string>(
+					"chanaccess_founder_message", "You have been set as founder of {channel} by {actor}.").c_str()), vars);
+				TrySendEmail(source, na->nc, subject, message);
+			}
 			return;
 		}
 
@@ -265,7 +320,14 @@ public:
 			if (notify_successor_change)
 				TrySendMemo(source, ci, na->nc, msg);
 			if (email_successor_change)
-				TrySendEmail(source, na->nc, "Successor change for " + ci->name, msg);
+			{
+				auto vars = BuildTemplateVars(ci, source, na->nc, "", "");
+				auto subject = Anope::Template(Language::Translate(na->nc, Config->GetBlock("mail").Get<const Anope::string>(
+					"chanaccess_successor_subject", "Successor change for {channel}").c_str()), vars);
+				auto message = Anope::Template(Language::Translate(na->nc, Config->GetBlock("mail").Get<const Anope::string>(
+					"chanaccess_successor_message", "You have been set as successor of {channel} by {actor}.").c_str()), vars);
+				TrySendEmail(source, na->nc, subject, message);
+			}
 			return;
 		}
 	}
