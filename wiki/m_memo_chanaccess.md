@@ -1,6 +1,6 @@
 # m_memo_chanaccess
 
-Notify users when they’re added to a channel access list, or when founder/successor changes.
+Notify users when they’re added to or removed from a channel access list, or when founder/successor changes.
 Supports MemoServ memos, email (Anope mail system), and online notices.
 Also supports mask entries (e.g. `nick!ident@host` or `*!*@*`).
 
@@ -90,8 +90,8 @@ Available tokens for templates:
 - {channel} channel name
 - {actor} nickname of the actor
 - {target} recipient account
-- {access} access string (access add only)
+- {access} access string (access add/del)
 - {network} network name
 - {account} recipient account
-- {mask} access mask (access add only)
+- {mask} access mask (access add/del)
 - {timestamp} current timestamp
