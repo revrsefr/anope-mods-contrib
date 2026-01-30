@@ -37,3 +37,50 @@ module {
 	sender = "ChanServ"
 }
 ```
+
+Mail templates (add to anope.conf, inside the mail { } block):
+
+```conf
+mail
+{
+	# Enable HTML formatting for this module’s emails.
+	content_type = "text/html; charset=UTF-8"
+
+	# Templates used by m_memo_chanaccess
+	chanaccess_access_subject = "Access update for {channel}"
+	chanaccess_access_message = "<p>Hello {target},</p>
+
+			<p>{actor} added you to the access list for <strong>{channel}</strong> (access: <strong>{access}</strong>).</p>
+
+			<p><strong>Mask:</strong> <code>{mask}</code><br>
+			<strong>Time:</strong> {timestamp}<br>
+			<strong>Network:</strong> {network}</p>"
+
+	chanaccess_founder_subject = "Founder change for {channel}"
+	chanaccess_founder_message = "<p>Hello {target},</p>
+
+			<p>{actor} has set you as founder of <strong>{channel}</strong>.</p>
+
+			<p><strong>Time:</strong> {timestamp}<br>
+			<strong>Network:</strong> {network}</p>"
+
+	chanaccess_successor_subject = "Successor change for {channel}"
+	chanaccess_successor_message = "<p>Hello {target},</p>
+
+			<p>{actor} has set you as successor of <strong>{channel}</strong>.</p>
+
+			<p><strong>Time:</strong> {timestamp}<br>
+			<strong>Network:</strong> {network}</p>"
+}
+```
+
+Available tokens for templates:
+
+- {channel} channel name
+- {actor} nickname of the actor
+- {target} recipient account
+- {access} access string (access add only)
+- {network} network name
+- {account} recipient account
+- {mask} access mask (access add only)
+- {timestamp} current timestamp
