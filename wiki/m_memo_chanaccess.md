@@ -1,6 +1,6 @@
 # m_memo_chanaccess
 
-Notify users when they’re added to or removed from a channel access list, or when founder/successor changes.
+ysNotify users when they’re added to or removed from a channel access list, or when founder/successor changes.
 Supports MemoServ memos, email (Anope mail system), and online notices.
 Also supports mask entries (e.g. `nick!ident@host` or `*!*@*`).
 

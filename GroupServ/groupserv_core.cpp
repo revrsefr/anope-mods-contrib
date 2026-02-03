@@ -1054,6 +1054,7 @@ void GroupServCore::OnReload(Configuration::Conf& conf)
 	this->maxgroupacs = mod->Get<unsigned int>("maxgroupacs", "0");
 	this->maxgroupmemos = mod->Get<unsigned int>("maxgroupmemos", "50");
 	this->enable_open_groups = mod->Get<bool>("enable_open_groups", "yes");
+	this->opers_only = mod->Get<bool>("opers_only", "no");
 
 	this->default_joinflags = this->ParseFlags(mod->Get<Anope::string>("default_joinflags", ""), false, GSAccessFlags::NONE);
 	// Atheme default: JOIN grants no privileges unless joinflags are configured.
@@ -1084,6 +1085,12 @@ bool GroupServCore::RegisterGroup(CommandSource& source, const Anope::string& gr
 	if (this->FindGroup(groupname))
 	{
 		this->ReplyF(source, "The group %s already exists.", groupname.c_str());
+		return false;
+	}
+
+	if (this->opers_only && !source.IsOper())
+	{
+		this->Reply(source, "Access denied. Only IRC operators can register groups.");
 		return false;
 	}
 

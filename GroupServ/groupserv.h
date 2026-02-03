@@ -212,6 +212,7 @@ private:
 	unsigned int maxgroupacs = 0;
 	unsigned int maxgroupmemos = 50; // 0 = unlimited
 	bool enable_open_groups = true;
+	bool opers_only = false;
 	GSAccessFlags default_joinflags = GSAccessFlags::NONE;
 	
 	time_t save_interval = 600;
