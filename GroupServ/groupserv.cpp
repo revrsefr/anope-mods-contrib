@@ -51,6 +51,10 @@
  *   # Accepts: +A +I, +ACLVIEW +INVITE, or compact +AI.
  *   default_joinflags = "+A"
  *
+ *   # Per-group VHOST approval:
+ *   # - SET <!group> VHOSTAUTO ON  => auto-approve vhost
+ *   # - SET <!group> VHOSTAUTO OFF => request via HostServ (default)
+ *
  *   # Auto-save interval in seconds (0 disables periodic autosave)
  *   save_interval = 600
  * }
@@ -71,6 +75,7 @@
 #include "groupserv.h"
 
 #include "language.h"
+#include "commands.h"
 
 #include <algorithm>
 #include <memory>
@@ -573,6 +578,57 @@ class CommandGroupServVHost final
 {
 	GroupServCore& gs;
 
+	class ForwardReply final
+		: public CommandReply
+	{
+		CommandSource& source;
+
+	public:
+		explicit ForwardReply(CommandSource& src)
+			: source(src)
+		{
+		}
+
+		void SendMessage(BotInfo*, const Anope::string& msg) override
+		{
+			source.Reply("%s", msg.c_str());
+		}
+	};
+
+	bool RequestVHost(CommandSource& source, const Anope::string& hostmask)
+	{
+		ServiceReference<Command> requestcmd("Command", "hostserv/request");
+		if (!requestcmd)
+		{
+			this->gs.Reply(source, "HostServ request command is not available.");
+			return false;
+		}
+
+		BotInfo* bi = nullptr;
+		Anope::string cmdname;
+		if (!Command::FindCommandFromService("hostserv/request", bi, cmdname) || !bi)
+		{
+			this->gs.Reply(source, "HostServ is not available.");
+			return false;
+		}
+
+		CommandInfo* info = bi->GetCommand(cmdname);
+		if (!info)
+		{
+			this->gs.Reply(source, "HostServ request command is not available.");
+			return false;
+		}
+
+		ForwardReply reply(source);
+		CommandSource hs_source(source.GetNick(), source.GetUser(), source.GetAccount(), &reply, bi);
+		hs_source.ip = source.ip;
+
+		std::vector<Anope::string> params;
+		params.push_back(hostmask);
+		requestcmd->Run(hs_source, cmdname, *info, params);
+		return true;
+	}
+
 	static void SyncAliases(const NickAlias* na)
 	{
 		if (!na || !na->HasVHost() || !na->nc)
@@ -689,10 +745,20 @@ public:
 			return;
 		}
 
-		na->SetVHost(user, host, source.GetNick());
-		SyncAliases(na);
-		FOREACH_MOD(OnSetVHost, (na));
-		this->gs.ReplyF(source, "Your vhost is now set to %s.", na->GetVHostMask().c_str());
+		const auto hostmask = (!user.empty() ? user + "@" : "") + host;
+		GSGroupFlags gflags = GSGroupFlags::NONE;
+		const bool autovhost = (this->gs.GetGroupFlags(groupname, gflags) && HasFlag(gflags, GSGroupFlags::VHOSTAUTO));
+		if (autovhost)
+		{
+			na->SetVHost(user, host, source.GetNick());
+			SyncAliases(na);
+			FOREACH_MOD(OnSetVHost, (na));
+			this->gs.ReplyF(source, "Your vhost is now set to %s.", na->GetVHostMask().c_str());
+			return;
+		}
+
+		if (!RequestVHost(source, hostmask))
+			return;
 	}
 };
 

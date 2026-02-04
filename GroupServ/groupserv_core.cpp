@@ -371,6 +371,7 @@ Anope::string GroupServCore::GroupFlagsToString(GSGroupFlags flags) const
 	if (HasFlag(flags, GSGroupFlags::ACSNOLIMIT)) add("ACSNOLIMIT");
 	if (HasFlag(flags, GSGroupFlags::OPEN)) add("OPEN");
 	if (HasFlag(flags, GSGroupFlags::PUBLIC)) add("PUBLIC");
+	if (HasFlag(flags, GSGroupFlags::VHOSTAUTO)) add("VHOSTAUTO");
 	if (out.empty())
 		out = "-";
 	return out;
@@ -1055,6 +1056,7 @@ void GroupServCore::OnReload(Configuration::Conf& conf)
 	this->maxgroupmemos = mod->Get<unsigned int>("maxgroupmemos", "50");
 	this->enable_open_groups = mod->Get<bool>("enable_open_groups", "yes");
 	this->opers_only = mod->Get<bool>("opers_only", "no");
+	this->default_vhostauto = mod->Get<bool>("vhostauto_default", "no");
 
 	this->default_joinflags = this->ParseFlags(mod->Get<Anope::string>("default_joinflags", ""), false, GSAccessFlags::NONE);
 	// Atheme default: JOIN grants no privileges unless joinflags are configured.
@@ -1090,7 +1092,7 @@ bool GroupServCore::RegisterGroup(CommandSource& source, const Anope::string& gr
 
 	if (this->opers_only && !source.IsOper())
 	{
-		this->Reply(source, "Access denied. Only IRC operators can register groups.");
+		this->Reply(source, "Access denied. Only IRC operators can register groups. Join the oper's channel for assistance.");
 		return false;
 	}
 
@@ -1107,7 +1109,7 @@ bool GroupServCore::RegisterGroup(CommandSource& source, const Anope::string& gr
 	GSGroupRecord& g = this->GetOrCreateGroup(groupname);
 	g.name = groupname;
 	g.regtime = Anope::CurTime;
-	g.flags = GSGroupFlags::NONE;
+	g.flags = this->default_vhostauto ? GSGroupFlags::VHOSTAUTO : GSGroupFlags::NONE;
 	g.joinflags = GSAccessFlags::NONE;
 	g.access.clear();
 
@@ -1838,6 +1840,25 @@ bool GroupServCore::SetOption(CommandSource& source, const Anope::string& groupn
 			return true;
 		}
 		this->Reply(source, "Syntax: SET <!group> PUBLIC <ON|OFF>");
+		return false;
+	}
+	if (up == "VHOSTAUTO")
+	{
+		if (value.equals_ci("ON"))
+		{
+			g->flags |= GSGroupFlags::VHOSTAUTO;
+			this->SaveDB();
+			this->ReplyF(source, "VHost requests for %s will be auto-approved.", g->name.c_str());
+			return true;
+		}
+		if (value.equals_ci("OFF"))
+		{
+			g->flags = static_cast<GSGroupFlags>(static_cast<unsigned int>(g->flags) & ~static_cast<unsigned int>(GSGroupFlags::VHOSTAUTO));
+			this->SaveDB();
+			this->ReplyF(source, "VHost requests for %s now require approval.", g->name.c_str());
+			return true;
+		}
+		this->Reply(source, "Syntax: SET <!group> VHOSTAUTO <ON|OFF>");
 		return false;
 	}
 
