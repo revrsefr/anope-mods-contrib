@@ -41,10 +41,12 @@ Key module options:
 - `admin_priv` — privilege required for forced admin commands (`FDROP`, `FFLAGS`)
 - `auspex_priv` — privilege required to view/list any group
 - `exceed_priv` — privilege required to bypass limits
+- `opers_only` — only IRC operators can register groups
 - `maxgroups` — max groups a single account may found (create)
 - `maxgroupacs` — max access list size per group (`0 = unlimited`)
 - `enable_open_groups` — allow `SET OPEN ON`
 - `default_joinflags` — flags granted when a user joins an open group
+- `vhostauto_default` — default for new groups: `yes` auto-approves vhosts, `no` requires approval
 - `save_interval` — autosave interval in seconds (`0` disables periodic autosave)
 
 ### `default_joinflags` format
@@ -123,7 +125,12 @@ Commands:
 
 - `VHOST <!group> [OFF]`
   - Activates the group’s stored vhost for your account (requires group flag `+v`).
+  - If the group has `VHOSTAUTO` enabled it applies immediately; otherwise it submits a HostServ request.
   - Remove your vhost: `/msg GroupServ VHOST !devs OFF`
+
+- `SET <!group> VHOSTAUTO <ON|OFF>`
+  - Enables or disables automatic approval of VHOST requests for this group.
+  - Example: `/msg GroupServ SET !devs VHOSTAUTO ON`
 
 ### Public
 
