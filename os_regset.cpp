@@ -5,9 +5,9 @@
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
- * Modify the registration time of a nick or channel.
+ * Modify the registration time of a nick, channel, or account.
  *
- * Syntax: REGSET {NICK|CHAN} name time
+ * Syntax: REGSET {NICK|CHAN|ACCOUNT} name time
  *
  * Configuration to put into your operserv config:
 module { name = "os_regset" }
@@ -24,8 +24,8 @@ class CommandOSRegSet : public Command
  public:
 	CommandOSRegSet(Module *creator) : Command(creator, "operserv/regset", 3, 3)
 	{
-		this->SetDesc(_("Modify the registration time of a nick or channel"));
-		this->SetSyntax(_("{NICK|CHAN} \037name\037 \037time\037"));
+		this->SetDesc(_("Modify the registration time of a nick, channel, or account"));
+		this->SetSyntax(_("{NICK|CHAN|ACCOUNT} \037name\037 \037time\037"));
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) override
@@ -78,8 +78,8 @@ class CommandOSRegSet : public Command
 			}
 
 			na->registered = ts;
-			Log(LOG_ADMIN, source, this) << "to modify the registration time on " << na->nick << " to: " << Anope::strftime(ts, NULL, true) << " (" << ts << ")";
-			source.Reply("The registration time of %s has been modified to %s (%lu)", na->nick.c_str(), Anope::strftime(ts, source.GetAccount()).c_str(), ts);
+			Log(LOG_ADMIN, source, this) << "to modify the registration time on nick " << na->nick << " to: " << Anope::strftime(ts, NULL, true) << " (" << ts << ")";
+			source.Reply("The registration time of nick %s has been modified to %s (%lu)", na->nick.c_str(), Anope::strftime(ts, source.GetAccount()).c_str(), ts);
 		}
 		else if (targtype.equals_ci("CHAN"))
 		{
@@ -97,8 +97,27 @@ class CommandOSRegSet : public Command
 			}
 
 			ci->registered = ts;
-			Log(LOG_ADMIN, source, this) << "to modify the registration time on " << ci->name << " to: " << Anope::strftime(ts, NULL, true) << " (" << ts << ")";
-			source.Reply("The registration time of %s has been modified to %s (%lu)", ci->name.c_str(), Anope::strftime(ts, source.GetAccount()).c_str(), ts);
+			Log(LOG_ADMIN, source, this) << "to modify the registration time on channel " << ci->name << " to: " << Anope::strftime(ts, NULL, true) << " (" << ts << ")";
+			source.Reply("The registration time of channel %s has been modified to %s (%lu)", ci->name.c_str(), Anope::strftime(ts, source.GetAccount()).c_str(), ts);
+		}
+		else if (targtype.equals_ci("ACCOUNT"))
+		{
+			NickCore *nc = NickCore::Find(target);
+			if (!nc)
+			{
+				source.Reply(NICK_X_NOT_REGISTERED, target.c_str());
+				return;
+			}
+
+			if (nc->registered == ts)
+			{
+				source.Reply("Current registration time is the same as the given time.");
+				return;
+			}
+
+			nc->registered = ts;
+			Log(LOG_ADMIN, source, this) << "to modify the registration time on account " << nc->display << " to: " << Anope::strftime(ts, NULL, true) << " (" << ts << ")";
+			source.Reply("The registration time of account %s has been modified to %s (%lu)", nc->display.c_str(), Anope::strftime(ts, source.GetAccount()).c_str(), ts);
 		}
 		else
 		{
@@ -111,10 +130,10 @@ class CommandOSRegSet : public Command
 	{
 		this->SendSyntax(source);
 		source.Reply(" ");
-		source.Reply("Allows an administrator to modify the registration time of a nick or channel.");
+		source.Reply("Allows an administrator to modify the registration time of a nick, channel, or account.");
 		source.Reply(" ");
-		source.Reply("\002NICK|CHAN\002 is the literal word and is used to specify which you are acting upon.\n"
-			     "\037name\037 is either the nickname or channel name.\n"
+		source.Reply("\002NICK|CHAN|ACCOUNT\002 is the literal word and is used to specify which you are acting upon.\n"
+			     "\037name\037 is either the nickname, channel name, or account (display nick) name.\n"
 			     "\037time\037 is the Unix timestamp to set the registration time to.");
 		return true;
 	}
@@ -132,7 +151,7 @@ class OSRegSet : public Module
 			throw ModuleException("Requires version 2.0.x or 2.1.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.2");
+		this->SetVersion("1.0.3");
 	}
 };
 
